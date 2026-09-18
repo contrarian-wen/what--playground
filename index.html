@@ -1,0 +1,1598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0d1117">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<title>Computer Fundamentals Playground · 计算机基础训练场</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d333f;
+  --text:#e6edf3; --dim:#9aa7b4; --accent:#58a6ff; --green:#3fb950; --red:#f85149; --yellow:#d29922; --purple:#bc8cff;
+  --mono:"Cascadia Code","JetBrains Mono",Consolas,"Courier New",monospace;
+}
+html,body{height:100%}
+body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+#app{display:flex;height:100vh}
+
+/* ============ 侧边栏 ============ */
+aside{width:300px;min-width:300px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.brand{padding:18px 16px 12px;border-bottom:1px solid var(--border)}
+.brand h1{font-size:15px;line-height:1.5}
+.brand .sub{font-size:12px;color:var(--dim);margin-top:4px}
+.progress-wrap{padding:14px 16px 6px}
+.progress-label{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:6px}
+.progress{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;border:1px solid var(--border)}
+#progressFill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--green));transition:width .4s ease;border-radius:99px}
+#levelList{flex:1;padding:8px 8px 16px}
+.level-item{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;background:none;border:none;color:var(--text);padding:10px;border-radius:10px;cursor:pointer;font-size:13px;line-height:1.45}
+.level-item:hover{background:var(--panel2)}
+.level-item.active{background:var(--panel2);outline:1px solid var(--accent)}
+.level-item.locked{opacity:.42;cursor:not-allowed}
+.level-item .lv-badge{min-width:26px;height:26px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-family:var(--mono);flex-shrink:0}
+.level-item.done .lv-badge{background:rgba(63,185,80,.15);border-color:var(--green);color:var(--green)}
+.level-item.current .lv-badge{background:rgba(88,166,255,.15);border-color:var(--accent);color:var(--accent)}
+.level-item .lv-title{font-weight:600}
+.level-item .lv-en{font-size:11px;color:var(--dim)}
+.level-item .lv-steps{font-size:11px;color:var(--dim);margin-top:2px}
+.reset-btn{margin:8px 16px 14px;padding:8px;background:none;border:1px solid var(--border);color:var(--dim);border-radius:8px;font-size:12px;cursor:pointer}
+.reset-btn:hover{color:var(--red);border-color:var(--red)}
+
+/* ============ 主区域 ============ */
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+#stepContent{flex:1;overflow-y:auto;padding:32px 40px 24px;max-width:920px;width:100%;margin:0 auto}
+.step-kicker{font-size:12px;color:var(--accent);letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:6px}
+.step-kicker .sep{color:var(--dim);margin:0 6px}
+h2.step-title{font-size:24px;margin-bottom:20px;line-height:1.35}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px;margin-bottom:16px}
+.card h3{font-size:15px;margin-bottom:10px;color:var(--accent)}
+.card p{font-size:14px;line-height:1.8;margin-bottom:8px;color:var(--text)}
+.card p:last-child{margin-bottom:0}
+.card ul,.card ol{margin:6px 0 8px 22px;font-size:14px;line-height:1.9}
+.card li{margin-bottom:4px}
+.card .en{color:var(--dim);font-size:.9em}
+.term-inline{font-family:var(--mono);background:#010409;border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:.92em;color:#a5d6ff;white-space:nowrap}
+.key-point{border-left:3px solid var(--yellow);background:rgba(210,153,34,.07);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px;line-height:1.8}
+.key-point strong{color:var(--yellow)}
+.good{border-left:3px solid var(--green);background:rgba(63,185,80,.07);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px;line-height:1.8}
+
+/* 术语 tooltip */
+.term{border-bottom:1px dashed var(--accent);cursor:help;position:relative;color:var(--accent)}
+.term:hover::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 8px);background:#010409;border:1px solid var(--border);color:var(--text);font-size:12px;line-height:1.6;padding:10px 12px;border-radius:10px;width:280px;z-index:50;white-space:normal;font-weight:normal;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+
+/* 示意图 */
+.diagram{background:#010409;border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:16px;overflow-x:auto}
+.diagram svg{display:block;margin:0 auto;max-width:100%}
+.diagram .cap{text-align:center;color:var(--dim);font-size:12px;margin-top:10px}
+
+/* 预测 / 测验选项 */
+.predict-scenario{font-size:14px;line-height:1.8;margin-bottom:14px}
+.opt-list{display:flex;flex-direction:column;gap:10px}
+.opt{display:flex;gap:12px;align-items:flex-start;text-align:left;width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.7;cursor:pointer;font-family:inherit}
+.opt:hover:not(:disabled){border-color:var(--accent)}
+.opt .opt-key{min-width:24px;height:24px;border-radius:6px;background:var(--panel);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;flex-shrink:0;margin-top:1px}
+.opt.correct{border-color:var(--green);background:rgba(63,185,80,.08)}
+.opt.correct .opt-key{background:var(--green);border-color:var(--green);color:#04140a}
+.opt.wrong{border-color:var(--red);background:rgba(248,81,73,.08);animation:shake .3s}
+.opt.wrong .opt-key{background:var(--red);border-color:var(--red);color:#fff}
+.opt:disabled{cursor:default;opacity:.85}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+.feedback{margin-top:14px;border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.8;display:none}
+.feedback.show{display:block}
+.feedback.ok{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.4)}
+.feedback.no{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.4)}
+
+/* before / after */
+.ba{display:flex;gap:14px;align-items:stretch;margin:14px 0;flex-wrap:wrap}
+.ba .ba-box{flex:1;min-width:220px;background:#010409;border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.9}
+.ba .ba-box .ba-label{font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.ba .ba-box.after{border-color:var(--green)}
+.ba .ba-arrow{align-self:center;color:var(--dim);font-size:20px}
+
+/* 任务卡 */
+.task-card{background:linear-gradient(135deg,rgba(88,166,255,.08),rgba(188,140,255,.05));border:1px solid rgba(88,166,255,.35);border-radius:14px;padding:18px 20px;margin-bottom:14px}
+.task-card .task-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.1em;color:#04140a;background:var(--accent);border-radius:6px;padding:2px 8px;margin-bottom:10px}
+.task-card p{font-size:14px;line-height:1.8;margin-bottom:8px}
+.task-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.btn{border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:10px;padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#04140a;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:#04140a}
+.btn.success{background:var(--green);border-color:var(--green);color:#04140a;font-weight:600}
+.btn.success:hover{filter:brightness(1.1);color:#04140a}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn:disabled:hover{border-color:var(--border);color:var(--text)}
+.hint-box{display:none;margin-top:12px;background:rgba(210,153,34,.08);border:1px solid rgba(210,153,34,.4);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7}
+.hint-box.show{display:block}
+.answer-box{display:none;margin-top:12px;background:rgba(188,140,255,.08);border:1px solid rgba(188,140,255,.4);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7}
+.answer-box.show{display:block}
+.answer-box code{font-family:var(--mono);color:var(--purple)}
+
+/* 命令拆解 */
+.breakdown{display:grid;gap:10px;margin:12px 0}
+.bd-part{display:flex;gap:12px;align-items:flex-start;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+.bd-token{font-family:var(--mono);background:#010409;border:1px solid var(--accent);color:#a5d6ff;border-radius:8px;padding:3px 10px;font-size:13px;flex-shrink:0}
+.bd-body{font-size:13px;line-height:1.65}
+.bd-body .bd-label{color:var(--accent);font-weight:600;display:block;margin-bottom:2px;font-size:12px}
+
+/* 文件树（可交互） */
+.filetree{font-family:var(--mono);font-size:13.5px;line-height:2;background:#010409;border:1px solid var(--border);border-radius:14px;padding:14px 18px;margin-bottom:14px;user-select:none}
+.ft-dir,.ft-file{display:flex;align-items:center;gap:6px;border-radius:6px;padding:0 6px}
+.ft-dir{cursor:pointer}
+.ft-dir:hover{background:var(--panel2)}
+.ft-children{margin-left:20px;border-left:1px dashed var(--border);padding-left:8px}
+.ft-ico{width:18px;text-align:center;flex-shrink:0}
+.ft-file .ft-ico{color:var(--dim)}
+.collapsed>.ft-children{display:none}
+.ft-note{font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:12px;color:var(--dim);margin:-6px 0 14px}
+
+/* 完成页 */
+.complete-hero{text-align:center;padding:40px 20px}
+.complete-hero .big{font-size:52px;margin-bottom:10px}
+.complete-hero h2{font-size:26px;margin-bottom:12px}
+.complete-hero p{color:var(--dim);font-size:14px;line-height:1.8;max-width:520px;margin:0 auto 20px}
+
+/* 步骤导航 */
+.step-nav{display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:18px;border-top:1px solid var(--border)}
+.step-dots{display:flex;gap:6px}
+.dot{width:8px;height:8px;border-radius:99px;background:var(--border)}
+.dot.done{background:var(--green)}
+.dot.cur{background:var(--accent);width:20px}
+
+/* ============ 终端模拟器 ============ */
+#terminalDock{border-top:1px solid var(--border);background:#010409;flex-shrink:0}
+#terminalDock.hidden{display:none}
+.term-head{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px;color:var(--dim)}
+.term-head .term-title{font-weight:600;color:var(--text)}
+.term-head .term-cwd{font-family:var(--mono);color:var(--accent)}
+.term-head .spacer{flex:1}
+.term-head button{background:none;border:1px solid var(--border);color:var(--dim);border-radius:6px;padding:2px 10px;font-size:11px;cursor:pointer;font-family:inherit}
+.term-head button:hover{color:var(--text);border-color:var(--dim)}
+#termOut{height:180px;overflow-y:auto;padding:10px 16px;font-family:var(--mono);font-size:13px;line-height:1.75}
+#termOut .t-line{white-space:pre-wrap;word-break:break-all}
+#termOut .t-cmd{color:var(--text)}
+#termOut .t-ok{color:#a5d6ff}
+#termOut .t-err{color:var(--red)}
+#termOut .t-dim{color:var(--dim)}
+#termOut .t-green{color:var(--green)}
+.term-input-row{display:flex;align-items:center;gap:8px;padding:8px 16px 12px;font-family:var(--mono);font-size:13px}
+#termPrompt{color:var(--green);white-space:nowrap}
+#termInput{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:var(--mono);font-size:13px;caret-color:var(--green)}
+@media (max-width:860px){aside{width:230px;min-width:230px}#stepContent{padding:20px}}
+
+/* ============ 顶栏（移动端抽屉） ============ */
+#topbar{display:none;align-items:center;gap:12px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
+#topbar .tb-title{font-size:14px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#menuBtn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:8px;width:42px;height:42px;font-size:17px;cursor:pointer;flex-shrink:0}
+#backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90}
+#backdrop.show{display:block}
+.side-tools{display:flex;gap:6px;padding:0 16px 8px;flex-wrap:wrap}
+.tool-btn{flex:1;min-width:64px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 4px;font-size:12px;cursor:pointer;font-family:inherit}
+.tool-btn:hover{border-color:var(--accent);color:var(--accent)}
+.level-item{display:flex;align-items:flex-start;gap:6px}
+.lv-main{flex:1;display:flex;gap:10px;align-items:flex-start;background:none;border:none;color:var(--text);text-align:left;padding:10px;border-radius:10px;cursor:pointer;font-size:13px;line-height:1.45;font-family:inherit;min-width:0}
+.lv-main:hover{background:var(--panel2)}
+.level-item.active .lv-main{background:var(--panel2);outline:1px solid var(--accent)}
+.lv-review{background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:6px 8px;align-self:center;flex-shrink:0;font-size:13px}
+.lv-review:hover{border-color:var(--green)}
+/* 覆盖层（路线图 / 术语本） */
+.overlay{display:none;position:fixed;inset:0;z-index:200;background:rgba(1,4,9,.72);align-items:center;justify-content:center;padding:16px}
+.overlay.show{display:flex}
+.overlay-card{background:var(--panel);border:1px solid var(--border);border-radius:16px;width:100%;max-width:720px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+.overlay-head{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border)}
+.overlay-head h2{font-size:17px;flex:1}
+.overlay-head button{background:none;border:1px solid var(--border);color:var(--dim);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:15px}
+.overlay-body{padding:16px 18px;overflow-y:auto}
+/* 复习页 */
+.review-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+@media(max-width:700px){.review-grid{grid-template-columns:1fr}}
+.review-grid .card{margin-bottom:0}
+.term-table{width:100%;border-collapse:collapse;font-size:13px}
+.term-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.term-table td.en{font-family:var(--mono);color:var(--accent)}
+.cmd-table{width:100%;border-collapse:collapse;font-size:13px}
+.cmd-table th{text-align:left;color:var(--dim);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--border)}
+.cmd-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.cmd-table td:first-child{font-family:var(--mono);color:#a5d6ff;white-space:nowrap}
+/* 命令拆解 chips */
+#dissectRow{display:none;gap:8px;align-items:flex-start;flex-wrap:wrap;padding:8px 16px 0;font-size:12px}
+#dissectRow.show{display:flex}
+.chip{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:5px 12px;cursor:help}
+.chip:hover{border-color:var(--accent)}
+.chip .chip-tok{font-family:var(--mono);font-size:13px;color:#a5d6ff}
+.chip .chip-role{font-size:10px;color:var(--dim);letter-spacing:.04em}
+.chip.role-program .chip-tok{color:var(--purple)}
+.chip.role-subcommand .chip-tok{color:var(--yellow)}
+.chip.role-option .chip-tok{color:var(--green)}
+/* 路线图 */
+.mod-item{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:var(--panel2)}
+.mod-item .mod-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px}
+.mod-item .mod-name{font-weight:700;font-size:14px}
+.mod-item .mod-status{font-size:11px;padding:2px 10px;border-radius:99px;border:1px solid var(--border);color:var(--dim);white-space:nowrap}
+.mod-item.available .mod-status{color:var(--green);border-color:var(--green)}
+.mod-item .mod-levels{font-size:12px;color:var(--dim);line-height:1.8}
+/* 手机端适配 */
+@media (max-width:860px){
+  aside{position:fixed;left:0;top:0;bottom:0;z-index:100;transform:translateX(-105%);transition:transform .25s ease;box-shadow:0 0 40px rgba(0,0,0,.6);width:280px;min-width:280px}
+  aside.open{transform:none}
+  #topbar{display:flex}
+  #stepContent{padding:18px 16px 20px}
+  h2.step-title{font-size:20px}
+  .btn,.opt{padding:14px 16px;font-size:15px}
+  #termInput{font-size:16px}
+  #termOut{font-size:12.5px;height:150px}
+  .ba{flex-direction:column}
+  .ba-arrow{transform:rotate(90deg);align-self:center}
+  .opt pre{white-space:pre-wrap;word-break:break-all;font-size:12px}
+  .diagram{padding:12px}
+  .term-input-row{padding:10px 12px 14px}
+  .task-actions .btn{flex:1;min-width:0}
+  .step-nav{flex-wrap:wrap;gap:10px}
+  .overlay-card{max-height:92vh}
+}
+#termOut,#stepContent,.overlay-body{-webkit-overflow-scrolling:touch}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">
+      <h1>🧠 Computer Fundamentals<br>Playground · 基础训练场</h1>
+      <div class="sub">Computer Literacy → Programming Environment Literacy</div>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-label"><span>Progress</span><span id="progressText">0%</span></div>
+      <div class="progress"><div id="progressFill"></div></div>
+    </div>
+    <nav id="levelList"></nav>
+    <div class="side-tools">
+      <button class="tool-btn" id="roadmapBtn">🗺️ Roadmap</button>
+      <button class="tool-btn" id="glossaryBtn">📖 Glossary</button>
+      <button class="tool-btn" id="exportBtn">⬇ Export</button>
+      <button class="tool-btn" id="importBtn">⬆ Import</button>
+      <input type="file" id="importFile" accept=".json" style="display:none">
+    </div>
+    <button class="reset-btn" id="resetAll">↺ Reset Progress</button>
+  </aside>
+  <div id="backdrop"></div>
+  <div class="overlay" id="overlay">
+    <div class="overlay-card">
+      <div class="overlay-head"><h2 id="overlayTitle"></h2><button id="overlayClose" aria-label="关闭">✕</button></div>
+      <div class="overlay-body" id="overlayBody"></div>
+    </div>
+  </div>
+  <main>
+    <div id="topbar">
+      <button id="menuBtn" aria-label="打开课程目录">☰</button>
+      <span class="tb-title">Computer Fundamentals Playground</span>
+    </div>
+    <div id="stepContent"></div>
+    <section id="terminalDock" class="hidden">
+      <div class="term-head">
+        <span class="term-title">Terminal Simulator</span>
+        <span class="term-cwd" id="termCwd"></span>
+        <span class="spacer"></span>
+        <span>Virtual · never touches your real computer</span>
+        <button id="termReset">Reset</button>
+      </div>
+      <div id="dissectRow"></div>
+      <div id="termOut"></div>
+      <div class="term-input-row">
+        <span id="termPrompt"></span>
+        <input id="termInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type a command, press Enter">
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+"use strict";
+/* ================================================================
+   第一部分：纯逻辑核心（虚拟文件系统 + 终端命令引擎）
+   这一部分不碰网页，负责"电脑内部"的模拟。
+   ================================================================ */
+
+// 默认虚拟文件系统：目录 = 对象，文件 = null
+function createDefaultFS(){
+  return {
+    "C:": {
+      "Users": {
+        "YOGA": {
+          "Desktop": { "VS Code.lnk": null, "回收站.lnk": null },
+          "Documents": { "notes.txt": null, "数学作业.docx": null, "简历.tex": null },
+          "Downloads": { "LaTeX-Workshop-2026.zip": null, "setup.exe": null },
+          "Pictures": { "猫.jpg": null },
+          "Music": {},
+          "hello.py": null,
+          "readme.md": null
+        }
+      }
+    }
+  };
+}
+
+function createTermState(){
+  return { cwd: ["C:", "Users", "YOGA"], fs: createDefaultFS() };
+}
+
+function pathStr(arr){ return arr.join("\\"); }
+
+function splitPath(arg){ return String(arg).split(/[\\/]+/).filter(Boolean); }
+
+// 把用户输入的路径（绝对或相对）解析成从盘符开始的段数组；无法解析返回 null
+function resolvePath(state, arg){
+  if(typeof arg !== "string" || arg.trim() === "") return null;
+  const segs = splitPath(arg.trim());
+  if(segs.length === 0) return null;
+  let base;
+  if(/^[a-zA-Z]:$/.test(segs[0])){
+    base = [];                       // 绝对路径：从盘符开始
+  } else {
+    base = state.cwd.slice();        // 相对路径：从当前目录开始
+  }
+  for(const s of segs){
+    if(s === ".") continue;
+    if(s === ".."){ if(base.length > 0) base.pop(); continue; }
+    base.push(s);
+  }
+  return base;
+}
+
+function getNode(fs, pathArr){
+  let node = fs;
+  for(const p of pathArr){
+    if(typeof node !== "object" || node === null || !(p in node)) return undefined;
+    node = node[p];
+  }
+  return node;
+}
+
+const COMMAND_INFO = {
+  pwd: { en: "print working directory", zh: "打印当前工作目录 —— 回答「我现在在哪？」" },
+  ls:  { en: "list", zh: "列出当前文件夹里有什么" },
+  cd:  { en: "change directory", zh: "改变当前所在文件夹" },
+};
+
+// 执行一行命令，返回结果对象（不修改 DOM）
+function executeCommand(state, line){
+  const trimmed = line.trim();
+  const result = {
+    input: line, cmd: "", args: [], err: false,
+    lines: [], cwdBefore: state.cwd.slice(), cwdAfter: state.cwd.slice(), resolved: null
+  };
+  if(trimmed === "") return result;
+  const tokens = trimmed.split(/\s+/);
+  result.cmd = tokens[0].toLowerCase();
+  result.args = tokens.slice(1);
+  const cmd = result.cmd;
+
+  if(cmd === "pwd"){
+    result.lines.push({ text: pathStr(state.cwd), cls: "t-ok" });
+    return result;
+  }
+
+  if(cmd === "ls"){
+    let targetPath = state.cwd, label = null;
+    if(result.args.length > 0){
+      const r = resolvePath(state, result.args[0]);
+      const node = r ? getNode(state.fs, r) : undefined;
+      if(!r || node === undefined){
+        result.err = true;
+        result.lines.push({ text: `ls: 找不到路径“${result.args[0]}”，因为该路径不存在。`, cls: "t-err" });
+        return result;
+      }
+      if(node === null){
+        result.err = true;
+        result.lines.push({ text: `ls: “${pathStr(r)}” 是一个文件，不是文件夹，没有成员可以列出。`, cls: "t-err" });
+        return result;
+      }
+      targetPath = r; label = pathStr(r);
+    }
+    const node = getNode(state.fs, targetPath);
+    const names = Object.keys(node);
+    if(names.length === 0){
+      result.lines.push({ text: "(这个文件夹是空的)", cls: "t-dim" });
+    } else {
+      names.sort().forEach(n => {
+        const isDir = node[n] !== null;
+        result.lines.push({ text: isDir ? n + "\\" : n, cls: isDir ? "t-green" : "t-ok" });
+      });
+    }
+    if(label) result.lines.push({ text: "", cls: "t-dim" }), result.lines.push({ text: "↑ 这是 " + label + " 的内容，你的位置没有变。", cls: "t-dim" });
+    return result;
+  }
+
+  if(cmd === "cd"){
+    if(result.args.length === 0){
+      result.err = true;
+      result.lines.push({ text: "cd: 缺少目标。用法：cd <文件夹名>", cls: "t-err" });
+      result.lines.push({ text: "（命令需要知道你想进入哪里）", cls: "t-dim" });
+      return result;
+    }
+    const r = resolvePath(state, result.args[0]);
+    const node = r ? getNode(state.fs, r) : undefined;
+    result.resolved = r;
+    if(!r || node === undefined){
+      result.err = true;
+      result.lines.push({ text: `cd: 找不到路径“${r ? pathStr(r) : result.args[0]}”，因为该路径不存在。`, cls: "t-err" });
+      result.lines.push({ text: "提示：先用 ls 看看当前文件夹里到底有什么，检查拼写。", cls: "t-dim" });
+      return result;
+    }
+    if(node === null){
+      result.err = true;
+      result.lines.push({ text: `cd: 路径“${pathStr(r)}”指向的是一个文件，不是文件夹。`, cls: "t-err" });
+      result.lines.push({ text: "cd 只能进入文件夹，不能进入文件。", cls: "t-dim" });
+      return result;
+    }
+    state.cwd = r;
+    result.cwdAfter = r.slice();
+    return result;
+  }
+
+  if(cmd === "help"){
+    result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
+    ["pwd  - 打印当前所在路径", "ls   - 列出当前文件夹的成员", "cd   - 进入某个文件夹"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    return result;
+  }
+
+  // 未知命令：模拟 command not found
+  result.err = true;
+  result.lines.push({ text: `${cmd} : 无法将“${cmd}”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。`, cls: "t-err" });
+  result.lines.push({ text: `（意思是：电脑找不到叫“${cmd}”的程序。检查拼写，或先学习如何安装程序 —— 这是 Level 6 的内容）`, cls: "t-dim" });
+  return result;
+}
+// ==== DOM 部分开始 ====
+/* ================================================================
+   第二部分：课程内容（Level 0 ~ Level 3）
+   每种 step 的类型：
+   - concept   概念讲解（有"我理解了"按钮）
+   - predict   预测题：先猜结果，再揭晓
+   - explore   可交互探索（如点击文件树）
+   - terminal  终端任务（Hint → Show Answer → 自己动手 → 拆解）
+   - complete  关卡完成页（自动生成）
+   ================================================================ */
+
+function treeMini(pairs){
+  // pairs: [{label, cls}] 渲染成小树/路径图
+  return '<div class="ba-box after"><div class="ba-label">AFTER</div>' + pairs.map(p =>
+    '<div class="' + (p.cls || "") + '">' + esc(p.label) + '</div>').join("") + "</div>";
+}
+
+const LEVELS = [
+{
+  id: 0,
+  title: "你到底在操作什么？",
+  en: "What are you actually operating?",
+  summary: "建立了第一个 mental model：电脑 = 硬盘（仓库）+ 内存（工作台）+ CPU（大脑），程序是一份被执行的指令清单。",
+  steps: [
+    { type: "concept",
+      title: "电脑其实只做三件事",
+      body: `
+        <p>每次你用电脑——不管是写代码、看视频还是编译 LaTeX——本质上只有三件事在发生：</p>
+        <ul>
+          <li><strong>硬盘 (Hard Disk / SSD)</strong>：仓库。所有<span class="term" data-tip="file 文件：一份有名字、有内容的东西，比如 hello.py、猫.jpg">文件</span>和程序都<span class="en">存</span>在这里，断电也不会丢。</li>
+          <li><strong>内存 (RAM)</strong>：工作台。地方小、速度快，断电就清空。电脑干活时，把要用到的程序和数据从硬盘<span class="en">搬</span>到这里。</li>
+          <li><strong>CPU</strong>：大脑。它不做"思考"之外的事——它只做一件事：按顺序执行<span class="term" data-tip="program 程序：一份可以被 CPU 执行的指令清单，比如 python.exe">程序</span>里的指令。</li>
+        </ul>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="240" viewBox="0 0 640 240">
+          <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#58a6ff"/></marker></defs>
+          <rect x="30" y="80" width="150" height="90" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="105" y="115" fill="#e6edf3" font-size="15" text-anchor="middle" font-weight="bold">硬盘 / SSD</text>
+          <text x="105" y="140" fill="#9aa7b4" font-size="12" text-anchor="middle">Hard Disk</text>
+          <text x="105" y="158" fill="#9aa7b4" font-size="12" text-anchor="middle">长期仓库 · 断电不丢</text>
+          <rect x="245" y="80" width="150" height="90" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="320" y="115" fill="#e6edf3" font-size="15" text-anchor="middle" font-weight="bold">内存</text>
+          <text x="320" y="140" fill="#9aa7b4" font-size="12" text-anchor="middle">RAM</text>
+          <text x="320" y="158" fill="#9aa7b4" font-size="12" text-anchor="middle">工作台 · 断电清空</text>
+          <rect x="460" y="80" width="150" height="90" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="535" y="115" fill="#e6edf3" font-size="15" text-anchor="middle" font-weight="bold">CPU</text>
+          <text x="535" y="140" fill="#9aa7b4" font-size="12" text-anchor="middle">中央处理器</text>
+          <text x="535" y="158" fill="#9aa7b4" font-size="12" text-anchor="middle">大脑 · 执行指令</text>
+          <line x1="180" y1="125" x2="243" y2="125" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+          <text x="212" y="112" fill="#58a6ff" font-size="11" text-anchor="middle">把程序搬进内存</text>
+          <line x1="395" y1="125" x2="458" y2="125" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+          <text x="427" y="112" fill="#58a6ff" font-size="11" text-anchor="middle">逐条执行指令</text>
+        </svg>
+        <div class="cap">程序平时「存」在硬盘上；运行时被「搬」进内存，由 CPU 一条一条执行。</div>
+        </div>`,
+      key: "记住一句话：<strong>文件是「存着的」，程序是「跑起来的」。</strong>你写的 hello.py 是文件；运行它的 python 是程序。"
+    },
+    { type: "concept",
+      title: "程序 vs 文件：一对最容易混淆的概念",
+      body: `
+        <p><strong>文件 (file)</strong> = 一份有名字、有内容的东西。你的 <span class="term-inline">hello.py</span>、<span class="term-inline">猫.jpg</span>、<span class="term-inline">简历.tex</span> 都是文件。文件是「死」的——放在那里什么也不做。</p>
+        <p><strong>程序 (program)</strong> = 一份特殊的文件，里面写的是「指令清单」，CPU 能看懂并执行它。比如 <span class="term-inline">python.exe</span>、<span class="term-inline">latex.exe</span>。程序是「活」的——被运行时才干活。</p>
+        <p>一个微妙的点：<strong>程序本身也是以文件的形式存在硬盘上的</strong>。python.exe 这个文件躺在硬盘里时，它只是数据；双击它，它被搬进内存，CPU 开始执行里面的指令——这时它才「活了」。</p>`,
+      key: "文件 = 内容。程序 = 特殊的文件（指令清单）。<strong>你写的代码是文件，运行代码的软件是程序。</strong>"
+    },
+    { type: "predict",
+      title: "预测：双击图标时，到底发生了什么？",
+      scenario: `你双击了桌面上的 <span class="term-inline">hello.py</span> 图标。在点下去的那一瞬间，<strong>严格来说</strong>发生了什么？`,
+      options: [
+        { t: `图标自己「变成了」程序，开始运行`, ok: false, why: "图标只是一张图片，它永远不可能变成程序。" },
+        { t: `电脑根据图标记录的位置，找到 hello.py 这个文件，并启动一个能读懂它的程序（比如 Python）来执行它`, ok: true },
+        { t: `hello.py 被复制了一份，复制品在运行`, ok: false, why: "程序运行时是被「搬进内存」，不是被复制。硬盘上的原文件没有动。" },
+        { t: `CPU 直接读硬盘，跳过内存`, ok: false, why: "CPU 只和内存打交道。一切数据都要先经过工作台（内存）。" }
+      ],
+      explain: `正确答案是 B。桌面图标只是一个「入口按钮」，它背后记着文件的真实位置。双击后：电脑找到 hello.py → 启动 Python → Python 把你的代码逐行翻译成 CPU 指令来执行。<br><br>这条链路（<strong>文件 → 程序 → 内存 → CPU</strong>）会贯穿整个课程。`
+    },
+    { type: "predict",
+      title: "小测验：下面哪一个是「程序」？",
+      scenario: `回想：程序 = 能被 CPU 执行的指令清单。下面四个东西里，哪一个是程序？`,
+      options: [
+        { t: `<span class="term-inline">hello.py</span> —— 你写的 Python 代码`, ok: false, why: "hello.py 只是文本文件（内容）。它需要 Python 程序来「读」它。" },
+        { t: `<span class="term-inline">python.exe</span> —— 安装 Python 时得到的那个东西`, ok: true },
+        { t: `<span class="term-inline">Documents</span> —— 装文件的夹子`, ok: false, why: "Documents 是文件夹，里面装的是文件。" },
+        { t: `<span class="term-inline">notes.txt</span> —— 你的笔记`, ok: false, why: "纯文本文件，内容是给人看的。" }
+      ],
+      explain: `答案是 <strong>python.exe</strong>。它是一个可执行文件（executable），CPU 能直接执行里面的指令。而 hello.py 虽然也是代码，但 CPU 看不懂它——必须靠 python.exe 这个「翻译官」运行。<br><br>这个区别后面会反复用到：为什么输入 <span class="term-inline">latex --version</span> 电脑能找到 latex？因为它知道 latex.exe 躺在硬盘哪里。`
+    }
+  ]
+},
+{
+  id: 1,
+  title: "文件和文件夹",
+  en: "Files & Folders",
+  summary: "理解了文件（有名字的内容）和文件夹（容器）的关系，以及硬盘上的文件是「树」状组织的。",
+  steps: [
+    { type: "concept",
+      title: "文件 = 纸，文件夹 = 夹子",
+      body: `
+        <p><strong>文件 (file)</strong>：一张纸。有名字（<span class="term-inline">notes.txt</span>）、有内容（你的笔记文字）。</p>
+        <p><strong>文件夹 (folder)</strong>，也叫<strong>目录 (directory)</strong>：一个夹子。它本身没有「内容」，只有「成员」——里面装的纸，或更小的夹子。</p>
+        <p>于是硬盘上的东西天然形成了一棵<strong>树 (tree)</strong>：大夹子套小夹子，最里面才是纸。最顶上的那个夹子（比如 <span class="term-inline">C:\\</span>）叫<strong>根 (root)</strong>。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="560" height="200" viewBox="0 0 560 200">
+          <rect x="220" y="10" width="120" height="36" rx="8" fill="#161b22" stroke="#58a6ff"/>
+          <text x="280" y="33" fill="#e6edf3" font-size="13" text-anchor="middle">C:\\ （根 root）</text>
+          <rect x="80" y="80" width="120" height="36" rx="8" fill="#161b22" stroke="#2d333f"/>
+          <text x="140" y="103" fill="#e6edf3" font-size="13" text-anchor="middle">Users\\</text>
+          <rect x="360" y="80" width="120" height="36" rx="8" fill="#161b22" stroke="#2d333f"/>
+          <text x="420" y="103" fill="#9aa7b4" font-size="13" text-anchor="middle">（还有别的盘…）</text>
+          <rect x="80" y="148" width="120" height="36" rx="8" fill="#161b22" stroke="#3fb950"/>
+          <text x="140" y="171" fill="#e6edf3" font-size="13" text-anchor="middle">YOGA\\</text>
+          <line x1="280" y1="46" x2="140" y2="80" stroke="#2d333f" stroke-width="2"/>
+          <line x1="280" y1="46" x2="420" y2="80" stroke="#2d333f" stroke-width="2"/>
+          <line x1="140" y1="116" x2="140" y2="148" stroke="#3fb950" stroke-width="2"/>
+          <text x="300" y="170" fill="#9aa7b4" font-size="12">YOGA 里面还有 Desktop、Documents、Downloads…（下一关自己展开看）</text>
+        </svg>
+        <div class="cap">树 = 一层套一层的文件夹，文件长在树枝末端。</div>
+        </div>`,
+      key: "文件夹可以装文件，<strong>也可以装别的文件夹</strong>。这种一层套一层的结构就是「树」。"
+    },
+    { type: "explore",
+      title: "动手：探索你的（虚拟）电脑",
+      body: `
+        <p>下面是一台<strong>模拟的</strong> Windows 电脑的文件树（结构参考你自己的电脑）。</p>
+        <p><strong>任务：点击文件夹，展开看看里面有什么；再点一次收起。</strong>注意观察：</p>
+        <ul>
+          <li>名字后面带 <span class="term-inline">\\</span> 的是文件夹，不带的是文件。</li>
+          <li>哪个文件夹里面还套着文件夹？</li>
+          <li>找到 <span class="term-inline">hello.py</span> 和 <span class="term-inline">简历.tex</span>，记住它们「住」在哪一层。</li>
+        </ul>`,
+      key: "路径 <span class='term-inline'>C:\\Users\\YOGA</span> 是「你的家」——个人文件都住在这棵子树下。下一关你会学到它叫 home directory（家目录）。"
+    },
+    { type: "predict",
+      title: "预测：移动文件之后，哪棵树是对的？",
+      scenario: `
+        现在 <span class="term-inline">notes.txt</span> 在 <span class="term-inline">C:\\Users\\YOGA\\</span> 这一层。你把<strong>移动</strong>（不是复制）到 <span class="term-inline">Documents</span> 文件夹里。<br><br>
+        移动之后，下面哪一棵「局部树」描述是正确的？`,
+      options: [
+        { t: `<pre style="font-family:var(--mono);font-size:13px;line-height:1.7">YOGA\\
+├── hello.py
+├── readme.md
+├── notes.txt          ← 还在原地
+└── Documents\\
+    └── 数学作业.docx</pre>`, ok: false, why: "这是「复制」的结果，不是「移动」。移动后原位置不该再有它。" },
+        { t: `<pre style="font-family:var(--mono);font-size:13px;line-height:1.7">YOGA\\
+├── hello.py
+├── readme.md
+└── Documents\\
+    ├── notes.txt      ← 搬到了这里
+    ├── 数学作业.docx
+    └── 简历.tex</pre>`, ok: true },
+        { t: `notes.txt 被「打开」在 Documents 里，YOGA 里还留着一个`, ok: false, why: "「打开」不是移动。打开只是看一眼，文件位置不变。" }
+      ],
+      explain: `移动 = <strong>把一个成员从一个文件夹改挂到另一个文件夹名下</strong>。整张「纸」只有一份，只是换了住的夹子。<br><br>这个 mental model 马上会救你一命：很多人以为 <span class="term-inline">cd Documents</span> 是「把东西移进 Documents」——完全不是。具体为什么，Level 3 见。`
+    },
+    { type: "predict",
+      title: "小测验：关于文件夹，哪个说法正确？",
+      scenario: `回想文件夹的三个特征：① 是容器 ② 装「成员」 ③ 成员可以是文件或其他文件夹。`,
+      options: [
+        { t: "文件夹里只能装文件，不能装文件夹", ok: false, why: "如果这样，树就永远只有两层了。现实是 Users 里装着 YOGA，YOGA 里又装着 Documents。" },
+        { t: "文件夹可以装文件，也可以装别的文件夹，所以可以一层套一层", ok: true },
+        { t: "文件夹本质上是一种程序", ok: false, why: "文件夹没有指令清单，它只是硬盘上的一种「登记表」：记着成员名字和位置。" },
+        { t: "一个文件可以同时属于两个文件夹", ok: false, why: "在树结构里，每个文件只有一个「父文件夹」（ shortcuts/快捷方式除外，那是另一种指针）。" }
+      ],
+      explain: `答案 B。树结构的核心规则：<strong>每个文件/文件夹都有且只有一个父文件夹</strong>，父文件夹里登记着它的名字。理解「登记」这个比喻，后面理解 Git 的 staging area 会轻松很多。`
+    }
+  ]
+}
+,
+{
+  id: 2,
+  title: "路径 —— 文件的地址",
+  en: "Paths",
+  summary: "掌握了路径（文件的地址）的写法：盘符\\用户\\文件夹\\文件名，以及绝对路径与相对路径的区别和 .. 的含义。",
+  steps: [
+    { type: "concept",
+      title: "路径 = 邮寄地址",
+      body: `
+        <p>光有「树」还不够。电脑怎么知道你想找哪张纸？靠<strong>路径 (path)</strong>——文件的完整地址。</p>
+        <p>Windows 的路径从<strong>盘符 (drive letter)</strong>开始，用 <span class="term-inline">\\</span> 一段一段往下钻：</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="680" height="130" viewBox="0 0 680 130">
+          <g font-size="12" text-anchor="middle">
+            <rect x="10"  y="30" width="70"  height="44" rx="8" fill="#161b22" stroke="#58a6ff"/><text x="45"  y="50" fill="#a5d6ff" font-family="Consolas,monospace" font-size="15">C:</text><text x="45" y="66" fill="#9aa7b4">盘符 从哪块硬盘开始</text>
+            <text x="96" y="58" fill="#2d333f" font-size="20">\\</text>
+            <rect x="110" y="30" width="90"  height="44" rx="8" fill="#161b22" stroke="#2d333f"/><text x="155" y="50" fill="#e6edf3" font-family="Consolas,monospace" font-size="15">Users</text><text x="155" y="66" fill="#9aa7b4">系统的「用户」区</text>
+            <text x="212" y="58" fill="#2d333f" font-size="20">\\</text>
+            <rect x="226" y="30" width="90"  height="44" rx="8" fill="#161b22" stroke="#3fb950"/><text x="271" y="50" fill="#3fb950" font-family="Consolas,monospace" font-size="15">YOGA</text><text x="271" y="66" fill="#9aa7b4">你的用户名</text>
+            <text x="328" y="58" fill="#2d333f" font-size="20">\\</text>
+            <rect x="342" y="30" width="110" height="44" rx="8" fill="#161b22" stroke="#2d333f"/><text x="397" y="50" fill="#e6edf3" font-family="Consolas,monospace" font-size="15">Documents</text><text x="397" y="66" fill="#9aa7b4">文件夹</text>
+            <text x="464" y="58" fill="#2d333f" font-size="20">\\</text>
+            <rect x="478" y="30" width="110" height="44" rx="8" fill="#161b22" stroke="#d29922"/><text x="533" y="50" fill="#d29922" font-family="Consolas,monospace" font-size="15">notes.txt</text><text x="533" y="66" fill="#9aa7b4">文件名（终点）</text>
+          </g>
+        </svg>
+        <div class="cap">C:\\Users\\YOGA\\Documents\\notes.txt —— 每一段都是一次「进入下一层文件夹」。</div>
+        </div>`,
+      key: "读路径的方法就是<strong>从左往右逐层敲门</strong>：先进 C: 盘 → 进 Users → 进 YOGA → 进 Documents → 找到 notes.txt。少了任何一段，地址都不完整。"
+    },
+    { type: "concept",
+      title: "绝对路径 vs 相对路径",
+      body: `
+        <p><strong>绝对路径 (absolute path)</strong>：从盘符开始的完整地址。<span class="term-inline">C:\\Users\\YOGA\\Documents\\notes.txt</span>。不管你在哪，它都指向同一个文件——像身份证上的完整户籍地址。</p>
+        <p><strong>相对路径 (relative path)</strong>：从「你当前所在的位置」出发的走法。<span class="term-inline">Documents\\notes.txt</span> 的意思是：<em>从我现在站的地方</em>出发，先进 Documents，再找 notes.txt。像「出门左拐的便利店」——你在哪，决定了它指哪。</p>
+        <div class="key-point">⚠️ 同一个相对路径，<strong>站在不同的地方输入，结果完全不同</strong>。这是新手 80% 的「找不到文件」错误的根源。</div>
+        <p>两个特殊记号：<span class="term-inline">.</span>（一个点）= 当前这层；<span class="term-inline">..</span>（两个点）= 上一层文件夹。它们在任何文件夹里都管用。</p>`,
+      key: "<strong>绝对 = 完整地址（从盘符开始）。相对 = 从当前位置怎么走（.. 是上楼，名字是下楼进房间）。</strong>"
+    },
+    { type: "predict",
+      title: "预测：哪个是相对路径？",
+      scenario: `假设你当前「站在」 <span class="term-inline">C:\\Users\\YOGA</span>，目标是 <span class="term-inline">Documents</span> 里的 <span class="term-inline">notes.txt</span>。下面哪个写法是<strong>相对路径</strong>？`,
+      options: [
+        { t: `<span class="term-inline">C:\\Users\\YOGA\\Documents\\notes.txt</span>`, ok: false, why: "这是绝对路径——它从盘符 C: 开始，是完整地址。" },
+        { t: `<span class="term-inline">Documents\\notes.txt</span>`, ok: true },
+        { t: `<span class="term-inline">\\notes.txt</span>`, ok: false, why: "开头写 \\ 表示「从当前盘的根开始」，这更接近绝对写法；而且根目录下根本没有 notes.txt。" },
+        { t: `<span class="term-inline">YOGA\\Documents\\notes.txt</span>`, ok: false, why: "从当前位置（已经在 YOGA 里）再进 YOGA\\，会去找 YOGA\\YOGA\\Documents\\notes.txt —— 不存在。" }
+      ],
+      explain: `答案是 <strong>Documents\\notes.txt</strong>。它没从盘符开始，只是「从当前位置出发」的走法。<br><br>注意选项 D 的陷阱：相对路径是<strong>从你站的地方</strong>算起的，你已经站在 YOGA 里了，不需要再进一次 YOGA。`
+    },
+    { type: "predict",
+      title: "预测：.. 指的是哪里？",
+      scenario: `你当前在 <span class="term-inline">C:\\Users\\YOGA\\Documents</span>。这时出现一个叫 <span class="term-inline">..</span> 的记号（两个点）。它指的是哪个文件夹？`,
+      options: [
+        { t: `<span class="term-inline">C:\\Users\\YOGA</span>`, ok: true },
+        { t: `<span class="term-inline">C:\\Users</span>`, ok: false, why: "只上了一层楼。Documents 的上一层是 YOGA，不是 Users。" },
+        { t: `<span class="term-inline">C:\\</span>`, ok: false, why: "那是上两层。一层一层来：Documents → YOGA。" },
+        { t: `不存在这个文件夹`, ok: false, why: ".. 不是一个真实存在的文件夹，它是一个「指针」：无论你在哪，它都指向你的上一层。所以任何一层都能用。" }
+      ],
+      explain: `答案是 <strong>C:\\Users\\YOGA</strong>。<span class="term-inline">..</span> 永远指向你的上一层。<br><br>记忆法：树状的文件夹像一栋楼，你在一楼，<span class="term-inline">cd ..</span> 就是「上楼一层」。`
+    },
+    { type: "predict",
+      title: "小测验：哪一个是绝对路径？",
+      scenario: `火眼金睛：下面四个里只有一个是绝对路径。`,
+      options: [
+        { t: `<span class="term-inline">Downloads\\setup.exe</span>`, ok: false, why: "没有盘符开头，是相对路径。" },
+        { t: `<span class="term-inline">C:\\Users\\YOGA\\Downloads\\setup.exe</span>`, ok: true },
+        { t: `<span class="term-inline">..\\Pictures\\猫.jpg</span>`, ok: false, why: "从 ..（上一层）出发，是相对路径。" },
+        { t: `<span class="term-inline">.\\hello.py</span>`, ok: false, why: "从 .（当前层）出发，是相对路径。" }
+      ],
+      explain: `答案 B。判断标准只有一个：<strong>是否以盘符（X:\\）开头</strong>。开头的才是绝对路径。`
+    }
+  ]
+},
+{
+  id: 3,
+  title: "Terminal 是什么",
+  en: "What is a Terminal?",
+  summary: "理解了终端 = 用文字给电脑下指令；会用了 pwd / ls / cd，知道 cd 只改变「当前位置」不移动文件，并学会阅读错误信息。",
+  steps: [
+    { type: "concept",
+      title: "终端 = 用文字给电脑下指令",
+      body: `
+        <p>到目前为止，你用电脑的方式是<strong>图形界面 (GUI)</strong>：看图标、点点点。电脑把这些点击「翻译」成指令执行。</p>
+        <p><strong>终端 (terminal)</strong> 是另一种方式：你直接打文字指令，电脑执行后把结果用文字打回来。一令一答，像发短信。</p>
+        <p>Windows 上常见的终端程序叫 <strong>PowerShell</strong>（蓝色的那个窗口）。你之前在 PowerShell 里成功运行过 <span class="term-inline">latex --version</span>——<strong>你其实已经在用终端了</strong>，只是当时不知道。</p>
+        <p>打开终端后，你看到的这一行叫<strong>提示符 (prompt)</strong>，它在「报自己的位置」：</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="120" viewBox="0 0 640 120">
+          <rect x="30" y="35" width="580" height="52" rx="10" fill="#010409" stroke="#2d333f"/>
+          <g font-family="Consolas,monospace" font-size="16">
+            <text x="55" y="67" fill="#3fb950">PS</text>
+            <text x="90" y="67" fill="#2d333f">|</text>
+            <text x="105" y="67" fill="#58a6ff">C:\\Users\\YOGA</text>
+            <text x="250" y="67" fill="#2d333f">|</text>
+            <text x="265" y="67" fill="#e6edf3">&gt;</text>
+            <rect x="282" y="50" width="10" height="24" fill="#3fb950"><animate attributeName="opacity" values="1;0;1" dur="1.2s" repeatCount="indefinite"/></rect>
+          </g>
+          <g font-size="11" fill="#9aa7b4" text-anchor="middle">
+            <text x="72" y="105">① PS = PowerShell 的标记</text>
+            <text x="177" y="105">② 当前目录（你站在哪）</text>
+            <text x="272" y="105">③ 光标：等你输入</text>
+          </g>
+        </svg>
+        <div class="cap">提示符 <span style="font-family:var(--mono);color:#3fb950">PS C:\\Users\\YOGA&gt;</span> 读作：「PowerShell 报到，你当前在 C:\\Users\\YOGA，请下指令」。</div>
+        </div>`,
+      key: "终端里始终有一个「<strong>当前目录 (current directory)</strong>」——你站在树的哪一层。绝大多数路径 confusion 都是忘了「我站在哪」。"
+    },
+    { type: "predict",
+      title: "预测：pwd 会做什么？",
+      scenario: `第一个命令来了：<span class="term-inline">pwd</span>（print working directory，打印当前工作目录）。<br><br>在终端里输入 pwd 并回车，会发生什么？`,
+      options: [
+        { t: "把当前所在的路径打印出来，比如 C:\\Users\\YOGA", ok: true },
+        { t: "把你「上移」一层文件夹", ok: false, why: "改变位置的是 cd 命令，pwd 只是「问问题」。" },
+        { t: "列出当前文件夹里所有文件", ok: false, why: "那是下一个命令 ls 的工作。" },
+        { t: "清空终端屏幕", ok: false, why: "清空是 clear。pwd 不修改任何东西。" }
+      ],
+      explain: `答案 A。pwd 是终端世界的「我在哪？」——它<strong>只提问，不改变任何东西</strong>。这是一个重要模式：有的命令是「提问」（pwd、ls），有的命令是「行动」（cd）。`
+    },
+    { type: "terminal",
+      title: "动手：pwd —— 问电脑「我在哪？」",
+      goal: "在下方终端模拟器里输入 pwd 并回车，观察输出。",
+      background: "pwd = print working directory。它把终端的「当前目录」原样打印出来。注意提示符 <span class='term-inline'>PS C:\\Users\\YOGA&gt;</span> 里其实已经写着答案了——pwd 是让它正式「说出口」。",
+      hints: [
+        "这个命令只有 3 个字母，不需要任何参数。",
+        "不用加任何东西，只输入命令本身。",
+        "答案：<code>pwd</code> —— 输入它，按 Enter。"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd",
+      success: "看！终端「说」出了你当前的位置。注意：pwd 之后提示符没有任何变化——因为你没有移动，只是问了个问题。",
+      internals: "pwd 的内部过程：终端收到 pwd → 查一下自己记录的「当前目录」变量 → 把这个字符串打印出来。<strong>整个过程没有触碰硬盘上的任何文件。</strong>",
+      breakdown: [
+        { token: "pwd", label: "命令 command", text: "print working directory 的缩写。意思是「告诉我现在的工作目录是什么」。" }
+      ]
+    },
+    { type: "terminal",
+      title: "动手：ls —— 看看这层有什么",
+      goal: "输入 ls 并回车，看看当前文件夹里住着谁。",
+      background: "ls = list（列出）。它把<strong>当前目录</strong>的成员名单打印出来：文件夹的名字后面会带 \\。同样——它只是「看一眼」，不改变任何东西。",
+      hints: [
+        "两个字母的命令，list 的缩写。",
+        "直接输入 ls 回车。",
+        "答案：<code>ls</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls",
+      success: "你看到了当前层的成员：Desktop\\、Documents\\、Downloads\\、Pictures\\ 这些文件夹（带 \\），还有 hello.py、readme.md 这些文件。",
+      internals: "ls 的内部过程：终端找到当前目录在硬盘上的「登记表」→ 逐个读出成员名字 → 打印出来。绿色带 \\ 的是文件夹，蓝色的是文件。<strong>依然没有任何文件被修改。</strong>",
+      breakdown: [
+        { token: "ls", label: "命令 command", text: "list 的缩写。意思是「列出当前文件夹的成员名单」。" }
+      ]
+    },
+    { type: "terminal",
+      title: "动手：cd —— 移动的是「你」，不是文件",
+      goal: "输入 cd Documents 并回车，进入 Documents 文件夹。",
+      background: "cd = change directory（改变目录）。终端有一个「当前目录」，cd 改变它——<strong>改变的是你站在哪，不是文件动了</strong>。这和你 Level 1 学的「移动文件」是完全不同的两回事。执行前后都留意提示符的变化。",
+      hints: [
+        "想想「改变目录」的英文：change directory。",
+        "命令是 cd，目标文件夹的名字跟在空格后面。",
+        "答案：<code>cd Documents</code>（大小写要一致）"
+      ],
+      validate: (r, s) => !r.err && pathStr(s.cwd) === "C:\\Users\\YOGA\\Documents",
+      success: "注意提示符变成了 PS C:\\Users\\YOGA\\Documents> —— 你「下楼」进了 Documents。文件们一个都没动，动的是你的位置。",
+      internals: "cd 的内部过程：终端把「当前目录」这个内部变量从 C:\\Users\\YOGA 改成 C:\\Users\\YOGA\\Documents。<strong>硬盘上的文件树原封未动</strong>——你只是换了个站位，从此 pwd、ls 都以新位置为准。",
+      breakdown: [
+        { token: "cd", label: "命令 command", text: "change directory 的缩写。意思是「我要换个文件夹站」。" },
+        { token: "Documents", label: "参数 argument（相对路径）", text: "你想去的文件夹。因为没从盘符开始写，它是相对路径：从当前位置 C:\\Users\\YOGA 出发，进入 Documents。解析后的完整地址：C:\\Users\\YOGA\\Documents" }
+      ],
+      beforeAfter: {
+        before: "C:\\Users\\YOGA",
+        after: "C:\\Users\\YOGA\\Documents",
+        note: "你没有把文件「移进」Documents。你只是改变了终端当前所在的位置 —— 文件树一点没变。"
+      }
+    },
+    { type: "predict",
+      title: "检验理解：cd 之后，notes.txt 搬家了吗？",
+      scenario: `你刚执行了 <span class="term-inline">cd Documents</span>。回想 Level 1 的移动文件练习——<strong>硬盘上的</strong> <span class="term-inline">notes.txt</span> 现在在哪？`,
+      options: [
+        { t: "它被移动到了 Documents 里面", ok: false, why: "那是「移动文件」做的事。cd 不碰任何文件——你可以用 ls 验证：notes.txt 还躺在 Documents 里（它本来就在这）。" },
+        { t: "它原地没动，只是「你现在站在 Documents 里了」", ok: true },
+        { t: "它被复制了一份到 Documents", ok: false, why: "复制会制造新文件。cd 没有创建、没有删除、没有移动任何文件。" }
+      ],
+      explain: `答案 B。这就是本课最重要的 mental model：<strong><span class="term-inline">cd</span> 移动的是「你」，不是文件。</strong><br><br>终端里的「当前目录」只是终端自己的一个内部状态（一个记住你在哪的便签），改它不产生任何文件操作。`
+    },
+    { type: "terminal",
+      title: "故意犯错：让电脑「抱怨」一次",
+      goal: "输入一个拼错的文件夹名，比如 cd Docments（少写一个 u），观察错误信息。<strong>报错是这个练习的目标——看到红色不要慌。</strong>",
+      background: "错误信息不是天书，它是电脑在「尽量告诉你哪里不对」。你的任务：故意触发一次 cd 报错，然后我们一起来读它。任何不存在的名字都可以。",
+      hints: [
+        "Documents 怎么拼？故意拼错它。",
+        "比如 cd Docments（少一个 u）。",
+        "答案示例：<code>cd Docments</code>（任何不存在的文件夹名都行）"
+      ],
+      validate: (r, s) => r.err && r.cmd === "cd" && /找不到路径|不存在/.test(r.lines[0] ? r.lines[0].text : ""),
+      success: "很好！你成功让电脑「抱怨」了。注意它没有崩溃、没有爆炸——它只是拒绝了这次操作，并解释了原因。接下来两道题，考考你会不会读这条报错。",
+      internals: "读错误信息的三段式：① <strong>cd:</strong> —— 谁报的错（是哪个命令）② <strong>找不到路径“…”</strong> —— 发生了什么（类别）③ <strong>因为该路径不存在</strong> —— 为什么（根因）+ 灰色的提示行告诉你怎么修。以后遇到任何报错，先找「为什么」那一段。",
+      breakdown: [
+        { token: "cd", label: "出错的命令", text: "报错信息开头会写明是哪个命令出的问题。这里是 cd。" },
+        { token: "Docments", label: "出错的原因", text: "这个文件夹不存在——大概率是拼写错误。修法：先 ls 看看当前层真实存在哪些文件夹。" }
+      ]
+    },
+    { type: "predict",
+      title: "读报错 ①：哪一部分告诉你「为什么」？",
+      scenario: `刚才的报错长这样：<br><br><span class="term-inline" style="color:var(--red)">cd: 找不到路径“C:\\Users\\YOGA\\Docments”，因为该路径不存在。</span><br><br>这句话里，<strong>哪一部分直接告诉你了根本原因</strong>？`,
+      options: [
+        { t: "“cd:” —— 开头那个命令名", ok: false, why: "它只告诉你「谁」报的错，没说为什么。" },
+        { t: "“因为该路径不存在” —— 原因从句", ok: true },
+        { t: "路径里的大写字母 C", ok: false, why: "大小写只是路径的一部分，不是原因。" }
+      ],
+      explain: `答案 B。读报错的通用公式：<strong>谁错了（cd:）→ 错成什么样（找不到路径）→ 为什么（因为…）</strong>。修 bug 时直奔「为什么」，能省下 90% 的时间。`
+    },
+    { type: "predict",
+      title: "读报错 ②：现在怎么修？",
+      scenario: `还是那个错：<span class="term-inline" style="color:var(--red)">cd: 找不到路径“C:\\Users\\YOGA\\Docments”，因为该路径不存在。</span><br><br><strong>下一步最合理的做法</strong>是什么？`,
+      options: [
+        { t: "重启电脑", ok: false, why: "文件夹不会因为重启而出现。重启治不了「名字打错了」。" },
+        { t: "用 ls 看看当前层到底有哪些文件夹，检查拼写", ok: true },
+        { t: "把电脑砸了", ok: false, why: "……预算不允许。而且 ls 更便宜。" },
+        { t: "输入 cd 不加任何东西试试", ok: false, why: "那样会报另一个错：缺少目标。电脑还是不知道你要去哪。" }
+      ],
+      explain: `答案 B。<strong>「先 ls，再 cd」是终端世界的黄金搭档</strong>：不知道有什么，就先看一眼名单，再指名道姓地进去。你刚才输入 help 看到的三个命令，已经够你在文件树里自由行走了。`
+    },
+    { type: "predict",
+      title: "综合小测：「我现在在哪」用哪个命令？",
+      scenario: `终端玩到现在，最后一个问题：<strong>你想知道当前的当前目录是什么</strong>，应该输入？`,
+      options: [
+        { t: "pwd", ok: true },
+        { t: "ls", ok: false, why: "ls 是列出这层有什么，不是你在哪。" },
+        { t: "cd", ok: false, why: "cd 是改变位置，pwd 才是问位置。" },
+        { t: "where am i", ok: false, why: "电脑还没聪明到懂自然语言……目前还得用它的词汇。" }
+      ],
+      explain: `答案 <strong>pwd</strong>。Level 3 结束！你已经会 pwd（我在哪）、ls（这有什么）、cd（我去那边）三个命令，还学会了读报错。<br><br>下一关 Level 4 会带你认识真正的 PowerShell 窗口，然后一路杀向 Git。`
+    }
+  ]
+}
+];
+
+/* ================================================================
+   第二部分补充：每关复习数据 / 课程路线图 / 命令拆解器 / 覆盖层
+   ================================================================ */
+const REVIEWS = {
+  0: {
+    concepts: [
+      "电脑只做三件事：硬盘（仓库）存文件、内存（工作台）临时放正在用的东西、CPU（大脑）执行指令",
+      "文件是「存着的」，程序是「跑起来的」；程序本身也是以文件形式躺在硬盘上",
+      "双击图标 ≠ 图标变成程序；图标只是入口，电脑据此找到文件并启动对应的程序"
+    ],
+    commands: [],
+    terms: [
+      { en: "file", zh: "文件", ex: "hello.py、猫.jpg" },
+      { en: "program", zh: "程序", ex: "python.exe" },
+      { en: "CPU", zh: "中央处理器（大脑）", ex: "Central Processing Unit" },
+      { en: "RAM", zh: "内存（工作台）", ex: "断电即清空" },
+      { en: "Hard Disk / SSD", zh: "硬盘（仓库）", ex: "长期保存，断电不丢" },
+      { en: "execute", zh: "执行", ex: "CPU 按指令清单逐条做事" },
+      { en: "GUI", zh: "图形界面", ex: "Graphical User Interface，点点点" }
+    ],
+    mistakes: [
+      "以为桌面图标就是程序本身——图标只是「入口按钮」",
+      "以为运行程序 = 复制一份再跑——是「搬进内存」，原件不动",
+      "混淆内存和硬盘：内存小、快、断电清空；硬盘大、慢、持久"
+    ],
+    quiz: [
+      { q: "程序运行时，它被「搬」到哪里由 CPU 执行？", options: [
+        { t: "硬盘", ok: false, why: "硬盘只负责存，CPU 不直接读硬盘。" },
+        { t: "内存（RAM）", ok: true, why: "" },
+        { t: "回收站", ok: false, why: "……那程序就真没了。" },
+        { t: "屏幕", ok: false, why: "屏幕只是输出设备，不负责执行。" } ] },
+      { q: "hello.py 对你来说是什么？", options: [
+        { t: "程序", ok: false, why: "它是文本文件；CPU 看不懂它，需要 python 这个程序来读。" },
+        { t: "文本文件（需要 Python 程序来运行它）", ok: true, why: "" } ] }
+    ]
+  },
+  1: {
+    concepts: [
+      "文件 = 有名字的内容；文件夹 = 容器，只有「成员」没有「内容」",
+      "文件夹可以装文件，也可以装别的文件夹 → 硬盘上是「树」结构",
+      "移动 ≠ 复制：移动是把成员从一个文件夹「改挂」到另一个文件夹名下"
+    ],
+    commands: [],
+    terms: [
+      { en: "folder / directory", zh: "文件夹 / 目录", ex: "两种叫法，同一个东西" },
+      { en: "tree", zh: "树（状结构）", ex: "一层套一层的组织方式" },
+      { en: "root", zh: "根目录", ex: "最顶层的 C:\\" },
+      { en: "move", zh: "移动", ex: "改换所属文件夹，只有一份" },
+      { en: "copy", zh: "复制", ex: "制造一份新的" }
+    ],
+    mistakes: [
+      "以为「移动文件」后原位置还有一份——那是复制",
+      "以为文件夹里只能装文件——文件夹可以无限套文件夹",
+      "把「打开文件」当成「移动文件」——打开不改变位置"
+    ],
+    quiz: [
+      { q: "把 notes.txt 移进 Documents 后，原来的位置还有 notes.txt 吗？", options: [
+        { t: "有，移动就是复制", ok: false, why: "那是复制。移动后原位置就没了。" },
+        { t: "没有，整个树里只剩 Documents 里那一份", ok: true, why: "" } ] },
+      { q: "文件夹 (directory) 里能装什么？", options: [
+        { t: "只能装文件", ok: false, why: "Users 里装着 YOGA，YOGA 里又装着 Documents——文件夹当然能装文件夹。" },
+        { t: "文件和其他文件夹", ok: true, why: "" } ] }
+    ]
+  },
+  2: {
+    concepts: [
+      "路径 = 文件的邮寄地址，从盘符开始用 \\ 逐层往下钻",
+      "绝对路径（从盘符开始）在任何位置都指同一个文件；相对路径取决于你站在哪",
+      "「.」= 当前层，「..」= 上一层——它们在任何文件夹里都管用"
+    ],
+    commands: [],
+    terms: [
+      { en: "path", zh: "路径", ex: "C:\\Users\\YOGA\\Documents" },
+      { en: "absolute path", zh: "绝对路径", ex: "从盘符开始的完整地址" },
+      { en: "relative path", zh: "相对路径", ex: "从当前位置出发的走法" },
+      { en: "drive letter", zh: "盘符", ex: "C:、D:" },
+      { en: ". (dot)", zh: "当前目录", ex: "你站的这一层" },
+      { en: ".. (dot dot)", zh: "上级目录", ex: "你站的上一层" }
+    ],
+    mistakes: [
+      "以为相对路径在任何地方都指同一个文件——相对路径随当前位置变化",
+      "数错 .. 的层数：Documents 的 .. 是 YOGA，不是 Users",
+      "写相对路径时多写了已经在的那一层（站在 YOGA 里写 YOGA\\Documents\\...）"
+    ],
+    quiz: [
+      { q: "哪一个是绝对路径？", options: [
+        { t: "Documents\\notes.txt", ok: false, why: "没从盘符开始，是相对路径。" },
+        { t: "C:\\Users\\YOGA\\Documents\\notes.txt", ok: true, why: "" },
+        { t: "..\\Pictures", ok: false, why: "从 .. 出发，是相对路径。" } ] },
+      { q: "你当前在 C:\\Users\\YOGA\\Documents，「..」指哪里？", options: [
+        { t: "C:\\Users\\YOGA", ok: true, why: "" },
+        { t: "C:\\Users", ok: false, why: "那是上两层。一层一层来。" },
+        { t: "C:\\", ok: false, why: "那是上三层。" } ] }
+    ]
+  },
+  3: {
+    concepts: [
+      "终端 = 用文字给电脑下指令的窗口；提示符 PS C:\\...> 随时在「报位置」",
+      "终端里有一个「当前目录 (current directory)」，pwd 问它、ls 看它、cd 改它",
+      "cd 移动的是「你」，不是文件——改的是终端的内部状态，硬盘原封未动",
+      "读报错三段式：谁错了 → 错成什么样 → 为什么（直奔「为什么」）"
+    ],
+    commands: [
+      { cmd: "pwd", en: "print working directory", zh: "打印当前所在路径（只提问，不改任何东西）" },
+      { cmd: "ls", en: "list", zh: "列出当前文件夹的成员（文件夹名字带 \\）" },
+      { cmd: "cd <文件夹>", en: "change directory", zh: "改变当前所在位置" },
+      { cmd: "cd ..", en: "change directory", zh: "回到上一层" },
+      { cmd: "help", en: "—", zh: "本模拟器：查看支持的命令" }
+    ],
+    terms: [
+      { en: "terminal", zh: "终端", ex: "用文字下指令的窗口" },
+      { en: "PowerShell", zh: "Windows 的一种 shell/终端程序", ex: "提示符是 PS" },
+      { en: "prompt", zh: "提示符", ex: "PS C:\\Users\\YOGA>" },
+      { en: "current directory", zh: "当前目录", ex: "你当前站在树的哪一层" },
+      { en: "command / argument", zh: "命令 / 参数", ex: "cd 是命令，Documents 是参数" },
+      { en: "error message", zh: "错误信息", ex: "cd: 找不到路径…因为该路径不存在" }
+    ],
+    mistakes: [
+      "以为 cd Documents 把文件移进了 Documents——文件树一点没变",
+      "看到红色报错就慌——报错是电脑在告诉你哪里不对，不是事故",
+      "不先 ls 就 cd——「先 ls 看名单，再 cd 点名」是黄金搭档",
+      "忘了自己站在哪——先 pwd 再行动"
+    ],
+    quiz: [
+      { q: "输入 pwd 会改变电脑里的任何东西吗？", options: [
+        { t: "会，它会刷新当前目录", ok: false, why: "pwd 只提问：把当前目录打印出来，什么都不改。" },
+        { t: "不会，它只是把当前位置打印出来", ok: true, why: "" } ] },
+      { q: "报错信息「cd: 找不到路径…因为该路径不存在」里，应该先读哪部分？", options: [
+        { t: "最开头的命令名", ok: false, why: "它只告诉你谁报的错。" },
+        { t: "「因为…」那一部分——原因从句", ok: true, why: "" },
+        { t: "窗口标题栏", ok: false, why: "标题栏从不参与解释错误。" } ] }
+    ]
+  }
+};
+
+const ROADMAP = [
+  { mod: "A", name: "File System & Paths · 文件系统与路径", levels: [0,1,2], desc: "Level 0 操作对象 → Level 1 文件与文件夹 → Level 2 路径（绝对/相对/..）" },
+  { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
+  { mod: "C", name: "Programs, PATH & Environment · 程序与 PATH", levels: [6,7], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量（为什么 latex --version 能找到 latex）" },
+  { mod: "D", name: "Git & GitHub", levels: [8,9,10,11,12,13,14], desc: "Level 8 Git mental model → 9 GitHub → 10 Repository → 11 clone/status/add/commit → 12 remote/push/pull（含 fetch vs pull 可视化）→ 13 分支与合并 → 14 阅读真实仓库 LaTeX-Workshop-2026" },
+  { mod: "E", name: "Development Environment · 开发环境", levels: [15,16], desc: "Level 15 VS Code 与开发环境 → Level 16 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）" },
+  { mod: "F", name: "Network Basics · 网络基础", levels: [17,18], desc: "Level 17 IP / DNS / 网络连接 → Level 18 ping / ipconfig / nslookup / 代理" },
+  { mod: "G", name: "Windows System Tools · Windows 系统工具", levels: [19,20], desc: "Level 19 任务管理器 / 进程 / CPU·内存·磁盘 → Level 20 环境变量界面 / 权限 / Administrator" },
+  { mod: "H", name: "WSL & Linux Basics", levels: [21], desc: "Level 21 WSL → Ubuntu → Bash：Windows 里跑 Linux，以及三套命令为何不同" },
+  { mod: "I", name: "Troubleshooting & Final · 排查与综合", levels: [22], desc: "Level 22 错误诊断综合训练：command not found / permission denied / not a git repository → 最终挑战" }
+];
+
+/* ---------- 通用命令拆解器 ----------
+   把任意命令行拆成 program / subcommand / option / argument。
+   这是「让我逐渐学会自己阅读命令」的核心工具。 */
+function dissectLine(line){
+  const row = document.getElementById("dissectRow");
+  const tokens = String(line).trim().split(/\s+/).filter(Boolean);
+  if(tokens.length === 0){ row.classList.remove("show"); return; }
+  const parts = [];
+  parts.push({ tok: tokens[0], role: "program 程序", cls: "role-program", tip: "要运行的程序。电脑会去 PATH 等地方找它（Level 6 详解）。" });
+  let i = 1;
+  if(tokens[0] === "git" && tokens[1] && !tokens[1].startsWith("-")){
+    parts.push({ tok: tokens[1], role: "subcommand 子命令", cls: "role-subcommand", tip: "git 的具体动作。git 本身只是工具箱，commit / push 才是动作。" });
+    i = 2;
+  }
+  for(; i < tokens.length; i++){
+    const t = tokens[i];
+    if(t.startsWith("-")) parts.push({ tok: t, role: "option / flag 选项", cls: "role-option", tip: "开关，用来改变命令的行为，不是操作对象。" });
+    else parts.push({ tok: t, role: "argument 参数", cls: "", tip: "命令作用的对象：文件、文件夹、或要写的内容。" });
+  }
+  row.innerHTML = `<span style="color:var(--dim);align-self:center;flex-shrink:0">🔍 tokens:</span>` + parts.map(p =>
+    `<span class="chip ${p.cls}" title="${esc(p.tip)}"><span class="chip-tok">${esc(p.tok)}</span><span class="chip-role">${esc(p.role)}</span></span>`).join("");
+  row.classList.add("show");
+}
+
+/* ---------- 覆盖层（路线图 / 术语本） ---------- */
+function openOverlay(title, html){
+  document.getElementById("overlayTitle").textContent = title;
+  document.getElementById("overlayBody").innerHTML = html;
+  document.getElementById("overlay").classList.add("show");
+}
+function closeOverlay(){ document.getElementById("overlay").classList.remove("show"); }
+
+/* ================================================================
+   第三部分：界面渲染与交互
+   ================================================================ */
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+const STORE_KEY = "cli-course-progress-v1";
+let store;
+try { store = JSON.parse(localStorage.getItem(STORE_KEY)) || null; } catch(e){ store = null; }
+if(!store || typeof store !== "object") store = { level: 0, step: 0, completed: {} };
+if(typeof store.completed !== "object" || !store.completed) store.completed = {};
+
+function saveStore(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(store)); }catch(e){} }
+
+function totalSteps(){ return LEVELS.reduce((a, l) => a + l.steps.length, 0); }
+function completedCount(){
+  let n = 0;
+  LEVELS.forEach((l, i) => { n += Math.min(store.completed[i] != null ? store.completed[i] + 1 : (i < store.level ? l.steps.length : 0), l.steps.length); });
+  return n;
+}
+function levelDone(i){ return store.completed[i] != null && store.completed[i] >= LEVELS[i].steps.length - 1; }
+function levelUnlocked(i){ return i === 0 || levelDone(i - 1); }
+
+function markStepDone(li, si){
+  if((store.completed[li] || 0) < si) store.completed[li] = si;
+  saveStore();
+}
+
+/* ---------- 终端 UI ---------- */
+let term = createTermState();
+const termOut = document.getElementById("termOut");
+const termInput = document.getElementById("termInput");
+const termPromptEl = document.getElementById("termPrompt");
+const termCwdEl = document.getElementById("termCwd");
+
+function updatePrompt(){
+  const p = "PS " + pathStr(term.cwd) + ">";
+  termPromptEl.textContent = p;
+  termCwdEl.textContent = pathStr(term.cwd);
+}
+function termPrint(text, cls){
+  const div = document.createElement("div");
+  div.className = "t-line " + (cls || "");
+  div.textContent = text;
+  termOut.appendChild(div);
+  termOut.scrollTop = termOut.scrollHeight;
+}
+function resetTerminal(silent){
+  term = createTermState();
+  termOut.innerHTML = "";
+  updatePrompt();
+  if(!silent){
+    termPrint("Windows PowerShell simulator (virtual — never touches your real PC)", "t-dim");
+    termPrint("Type help to see supported commands", "t-dim");
+  }
+}
+document.getElementById("termReset").addEventListener("click", () => resetTerminal());
+
+termInput.addEventListener("keydown", (e) => {
+  if(e.key !== "Enter") return;
+  const line = termInput.value;
+  termInput.value = "";
+  if(line.trim() === "") return;
+  termPrint(termPromptEl.textContent + " " + line, "t-cmd");
+  dissectLine(line);
+  if(line.trim().toLowerCase() === "clear"){ termOut.innerHTML = ""; return; }
+  const result = executeCommand(term, line);
+  result.lines.forEach(l => termPrint(l.text, l.cls));
+  updatePrompt();
+  if(currentTerminalValidator){
+    currentTerminalValidator(result);
+  }
+});
+
+/* ---------- 步骤渲染 ---------- */
+const stepContent = document.getElementById("stepContent");
+const terminalDock = document.getElementById("terminalDock");
+let currentTerminalValidator = null;
+
+function kickerHTML(li, si){
+  const l = LEVELS[li];
+  return `<div class="step-kicker">Level ${l.id}<span class="sep">·</span>${esc(l.title)}<span class="sep">·</span>Step ${si + 1} / ${l.steps.length}</div>`;
+}
+
+function stepDotsHTML(li, si){
+  const l = LEVELS[li];
+  let h = '<div class="step-dots">';
+  for(let i = 0; i < l.steps.length; i++){
+    h += `<span class="dot ${i < si ? "done" : i === si ? "cur" : ""}"></span>`;
+  }
+  return h + "</div>";
+}
+
+function navHTML(li, si, nextEnabled){
+  const l = LEVELS[li];
+  const isLast = si === l.steps.length - 1;
+  return `
+    <div class="step-nav">
+      <button class="btn" id="navPrev" ${si === 0 ? "disabled" : ""}>← Prev</button>
+      ${stepDotsHTML(li, si)}
+      <button class="btn ${nextEnabled ? "primary" : ""}" id="navNext" ${nextEnabled ? "" : "disabled"}>${isLast ? "Finish Level 🎉" : "Next →"}</button>
+    </div>`;
+}
+function wireNav(li, si){
+  const prev = document.getElementById("navPrev");
+  const next = document.getElementById("navNext");
+  if(prev) prev.addEventListener("click", () => { store.level = li; store.step = si - 1; saveStore(); render(); });
+  if(next) next.addEventListener("click", () => {
+    const l = LEVELS[li];
+    if(si === l.steps.length - 1){
+      // 最后一节完成 → 进入复习总结页（Learn → Practice → Review → Next）
+      renderReview(li);
+    } else {
+      store.level = li; store.step = si + 1; saveStore(); render();
+    }
+  });
+}
+
+function render(){
+  currentTerminalValidator = null;
+  const li = store.level, si = store.step;
+  const level = LEVELS[li];
+  const step = level.steps[si];
+  terminalDock.classList.toggle("hidden", step.type !== "terminal");
+
+  if(step.type === "complete"){ renderReview(li); return; }
+
+  let html = kickerHTML(li, si) + `<h2 class="step-title">${esc(step.title)}</h2>`;
+
+  if(step.type === "concept"){
+    if(step.bodyEn){
+      // 语言框架：English-first，中文按需显示（Level 4+ 内容将默认提供 bodyEn）
+      html += `<div class="card"><div id="enBody">${step.bodyEn}</div><div id="zhBody" style="display:none">${step.body}</div>
+        <div style="margin-top:10px"><button class="btn" id="langToggle" style="font-size:12px;padding:5px 12px">💡 中文解释 / Show Chinese</button></div></div>`;
+    } else {
+      html += `<div class="card">${step.body}</div>`;
+    }
+    if(step.visual) html += step.visual;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += `<div style="margin-top:6px"><button class="btn success" id="understoodBtn">Got it — Continue →</button></div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    document.getElementById("understoodBtn").addEventListener("click", () => {
+      markStepDone(li, si);
+      document.getElementById("navNext").disabled = false;
+      document.getElementById("navNext").classList.add("primary");
+      document.getElementById("understoodBtn").disabled = true;
+      document.getElementById("understoodBtn").textContent = "✓ Done";
+    });
+    const lt = document.getElementById("langToggle");
+    if(lt){
+      lt.addEventListener("click", () => {
+        const en = document.getElementById("enBody"), zh = document.getElementById("zhBody");
+        const showingZh = zh.style.display !== "none";
+        zh.style.display = showingZh ? "none" : "block";
+        en.style.display = showingZh ? "block" : "none";
+        lt.textContent = showingZh ? "💡 中文解释 / Show Chinese" : "🇬🇧 English";
+      });
+    }
+  }
+
+  if(step.type === "explore"){
+    html += `<div class="card">${step.body}</div>`;
+    html += `<div class="ft-note">📁 点击文件夹展开 / 收起</div>`;
+    html += `<div class="filetree" id="ftRoot"></div>`;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += `<div style="margin-top:6px"><button class="btn success" id="exploreDoneBtn">Done Exploring — Continue →</button></div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    buildFileTree(document.getElementById("ftRoot"), term.fs, []);
+    document.getElementById("exploreDoneBtn").addEventListener("click", () => {
+      markStepDone(li, si);
+      document.getElementById("navNext").disabled = false;
+      document.getElementById("navNext").classList.add("primary");
+      document.getElementById("exploreDoneBtn").disabled = true;
+      document.getElementById("exploreDoneBtn").textContent = "✓ Done";
+    });
+  }
+
+  if(step.type === "predict"){
+    html += `<div class="card"><div class="predict-scenario">${step.scenario}</div>`;
+    html += `<div class="opt-list">` + step.options.map((o, i) =>
+      `<button class="opt" data-i="${i}"><span class="opt-key">${"ABCD"[i]}</span><span>${o.t}</span></button>`).join("") + `</div>`;
+    html += `<div class="feedback" id="fb"></div></div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    const fb = document.getElementById("fb");
+    let answered = false;
+    stepContent.querySelectorAll(".opt").forEach(btn => {
+      btn.addEventListener("click", () => {
+        if(answered) return;
+        const i = Number(btn.dataset.i);
+        const opt = step.options[i];
+        if(opt.ok){
+          answered = true;
+          btn.classList.add("correct");
+          stepContent.querySelectorAll(".opt").forEach(b => b.disabled = true);
+          fb.className = "feedback show ok";
+          fb.innerHTML = `<strong>✅ Correct!</strong> <br>${step.explain}`;
+          markStepDone(li, si);
+          const nx = document.getElementById("navNext");
+          nx.disabled = false; nx.classList.add("primary");
+        } else {
+          btn.classList.add("wrong");
+          btn.disabled = true;
+          fb.className = "feedback show no";
+          fb.innerHTML = `<strong>❌ Not quite.</strong> ${opt.why || "Think again — the concept in the previous step has the clue."}<br>(wrong option eliminated — keep trying)`;
+        }
+      });
+    });
+  }
+
+  if(step.type === "terminal"){
+    html += `
+      <div class="task-card">
+        <span class="task-tag">TASK CARD</span>
+        <p><strong>🎯 Goal:</strong> ${step.goal}</p>
+        <p><strong>📖 Background:</strong> ${step.background}</p>
+        <div class="task-actions">
+          <button class="btn" id="hintBtn">💡 Hint</button>
+          <button class="btn" id="answerBtn">👀 Show Answer</button>
+        </div>
+        <div class="hint-box" id="hintBox"></div>
+        <div class="answer-box" id="answerBox"></div>
+      </div>
+      <div id="terminalSuccess" style="display:none"></div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+
+    let hintLevel = 0;
+    const hintBox = document.getElementById("hintBox");
+    const answerBox = document.getElementById("answerBox");
+    document.getElementById("hintBtn").addEventListener("click", () => {
+      if(hintLevel < step.hints.length){
+        hintBox.classList.add("show");
+        hintBox.innerHTML = `<strong>Hint ${hintLevel + 1}/${step.hints.length}:</strong> ${step.hints[hintLevel]}`;
+        hintLevel++;
+      } else {
+        hintBox.innerHTML = `<strong>No more hints.</strong> You can reveal the answer — but try typing it yourself first. Typing IS the learning.`;
+      }
+    });
+    document.getElementById("answerBtn").addEventListener("click", () => {
+      answerBox.classList.add("show");
+      answerBox.innerHTML = `<strong>Answer:</strong> ${step.hints[step.hints.length - 1]}<br>⚠️ Don't just copy-paste — after it runs, read "What's happening inside the computer?" carefully. That's the point.`;
+    });
+
+    currentTerminalValidator = (result) => {
+      if(!step.validate(result, term)) return;
+      if(currentTerminalValidator === null) return;
+      currentTerminalValidator = null;
+      markStepDone(li, si);
+      const box = document.getElementById("terminalSuccess");
+      let inner = `<div class="good"><strong>🎉 Task complete!</strong> ${step.success || ""}</div>`;
+      if(step.beforeAfter){
+        inner += `<div class="ba">
+          <div class="ba-box"><div class="ba-label">BEFORE</div>Your location:<br>${esc(step.beforeAfter.before)}</div>
+          <div class="ba-arrow">→</div>
+          <div class="ba-box after"><div class="ba-label">AFTER</div>Your location:<br>${esc(step.beforeAfter.after)}</div>
+        </div>
+        <div class="key-point">${step.beforeAfter.note}</div>`;
+      }
+      if(step.breakdown){
+        inner += `<div class="card"><h3>🔍 Command Breakdown</h3><div class="breakdown">` +
+          step.breakdown.map(b => `<div class="bd-part"><span class="bd-token">${esc(b.token)}</span><span class="bd-body"><span class="bd-label">${esc(b.label)}</span>${b.text}</span></div>`).join("") +
+          `</div></div>`;
+      }
+      inner += `<div class="card"><h3>🖥️ What's happening inside the computer?</h3><p>${step.internals}</p></div>`;
+      box.innerHTML = inner;
+      box.style.display = "block";
+      const nx = document.getElementById("navNext");
+      nx.disabled = false; nx.classList.add("primary");
+      box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+    termInput.focus();
+  }
+
+  wireNav(li, si);
+  renderSidebar();
+}
+
+/* ---------- 文件树（可交互） ---------- */
+function buildFileTree(container, node, pathArr){
+  const names = Object.keys(node);
+  const dirs = names.filter(n => node[n] !== null).sort();
+  const files = names.filter(n => node[n] === null).sort();
+  dirs.concat(files).forEach(name => {
+    const isDir = node[name] !== null;
+    const row = document.createElement("div");
+    row.className = isDir ? "ft-dir collapsed" : "ft-file";
+    row.innerHTML = `<span class="ft-ico">${isDir ? "📁" : "📄"}</span><span>${esc(name)}${isDir ? "\\" : ""}</span>`;
+    container.appendChild(row);
+    if(isDir){
+      const kids = document.createElement("div");
+      kids.className = "ft-children";
+      row.appendChild(kids);
+      buildFileTree(kids, node[name], pathArr.concat(name));
+      row.addEventListener("click", (e) => {
+        if(e.target.closest(".ft-children") && e.target.closest(".ft-dir") !== row) return;
+        row.classList.toggle("collapsed");
+        row.querySelector(".ft-ico").textContent = row.classList.contains("collapsed") ? "📁" : "📂";
+      });
+    }
+  });
+}
+
+/* ---------- Learning Assistant（Question Box · Phase 1 内置引导模式） ----------
+   定位：不是「问什么给完整答案」，而是 Hint → 引导问题 → （可选）完整答案。
+   Phase 2（部署后）：把 learningAssistant() 的内部换成对代理 API 的 fetch 调用即可，
+   界面与数据格式不用改。 */
+function learningAssistant(levelId, q){
+  const s = q.toLowerCase();
+  const has = (...ws) => ws.some(w => s.includes(w));
+  if(has("wsl", "/mnt", "linux", "ubuntu")){
+    return {
+      hint: "WSL is a real Linux running inside Windows. Linux has <strong>no drive letters</strong> (no C:) — it sees Windows drives as folders mounted under <span class='term-inline'>/mnt</span>.",
+      question: "Inside WSL, run <span class='term-inline'>pwd</span>. Does the path start with <span class='term-inline'>/</span> or with a drive letter? What does that tell you about whose rules are in effect?",
+      spoiler: "Windows gives each drive a letter (C:\\, D:\\). Linux uses one unified tree starting at <span class='term-inline'>/</span>. WSL mounts your Windows C: drive at <span class='term-inline'>/mnt/c</span>, so C:\\Users\\YOGA becomes /mnt/c/Users/YOGA. Same files — two different addressing systems. (Level 21 covers WSL in depth.)"
+    };
+  }
+  if(has("absolute", "relative", "相对", "绝对")){
+    return {
+      hint: "An absolute path is a complete address from the drive root; a relative path is a set of directions from <em>where you currently stand</em>.",
+      question: "If you're in C:\\Users\\YOGA and type <span class='term-inline'>cd Documents</span> — is <span class='term-inline'>Documents</span> absolute or relative? Would it mean the same thing if you were in C:\\?",
+      spoiler: "<span class='term-inline'>Documents</span> is relative — it means \"the Documents folder inside my current folder\". From C:\\ it would point to C:\\Documents, which doesn't exist. Absolute paths work from anywhere; relative paths depend on the current directory."
+    };
+  }
+  if(has("环境变量", "environment", "path 是", "what is path", "what's path", "path?")){
+    return {
+      hint: "Think about what happened when you typed <span class='term-inline'>git</span> or <span class='term-inline'>latex --version</span> in PowerShell. You did NOT type a full address like C:\\...\\git.exe.",
+      question: "So why doesn't the terminal need the full path to git.exe? Where could it be getting the list of folders to search?",
+      spoiler: "PATH is an environment variable: a list of folders the shell searches, in order, whenever you type a program name. git.exe lives in one of those folders, so typing <span class='term-inline'>git</span> is enough. Levels 6–7 build this mental model properly."
+    };
+  }
+  if(has("cd ", "cd,", "move", "移动")){
+    return {
+      hint: "Remember: <span class='term-inline'>cd</span> changes exactly one thing — the terminal's internal \"current directory\" note.",
+      question: "After <span class='term-inline'>cd Documents</span>, if a second terminal window lists your home folder, is notes.txt still there? What does that tell you about whether any file moved?",
+      spoiler: "Nothing moved. cd only rewrites the terminal's own record of where you stand. The file tree on disk is untouched — that's why pwd/ls behave differently afterwards while your files stay put."
+    };
+  }
+  if(has("terminal", "shell")){
+    return {
+      hint: "Terminal = the window. Shell = the program inside the window that reads and interprets your commands. Related, but not the same thing.",
+      question: "PowerShell and CMD can run inside the same terminal window app. So which one decides what <span class='term-inline'>ls</span> does — the window, or the shell program inside it?",
+      spoiler: "The shell. The terminal is just a text window; the shell interprets commands. PowerShell, CMD and Bash are different shells with different vocabularies — Levels 4–5 cover this family tree with a diagram."
+    };
+  }
+  const rv = REVIEWS[levelId];
+  return {
+    hint: "Good question. Before I answer — re-read the Key Concepts card and the mental-model line at the top of this review page.",
+    question: "Which concept from this level does your question touch? Try explaining it in one sentence yourself first, then ask again and include your sentence.",
+    spoiler: (rv && rv.concepts.length) ? "This level's core ideas, one line each:<br>• " + rv.concepts.join("<br>• ") : ""
+  };
+}
+
+/* ---------- 复习总结页（Review） ---------- */
+function renderReview(li){
+  const level = LEVELS[li];
+  const rv = REVIEWS[level.id] || {};
+  terminalDock.classList.add("hidden");
+  currentTerminalValidator = null;
+  const hasNext = li + 1 < LEVELS.length;
+  const termsRows = (rv.terms || []).map(t =>
+    `<tr><td class="en">${esc(t.en)}</td><td>${esc(t.zh)}${t.ex ? `<br><span style="color:var(--dim);font-size:12px">${esc(t.ex)}</span>` : ""}</td></tr>`).join("");
+  const cmdRows = (rv.commands || []).map(c =>
+    `<tr><td>${esc(c.cmd)}</td><td>${esc(c.en)}</td><td>${esc(c.zh)}</td></tr>`).join("");
+  const mistakeItems = (rv.mistakes || []).map(m => `<li>${m}</li>`).join("");
+  const conceptItems = (rv.concepts || []).map(c => `<li>${c}</li>`).join("");
+  const quizzes = (rv.quiz || []).map((q, qi) => `
+    <div class="card" style="margin-bottom:12px"><strong style="font-size:14px">Quiz ${qi + 1}: </strong>${q.q}
+      <div class="opt-list" style="margin-top:10px">${q.options.map((o, oi) =>
+        `<button class="opt" data-q="${qi}" data-i="${oi}"><span class="opt-key">${"ABCD"[oi]}</span><span>${o.t}</span></button>`).join("")}</div>
+      <div class="feedback" id="rq-${qi}"></div>
+    </div>`).join("");
+  stepContent.innerHTML = `
+    <div class="step-kicker">Level ${level.id} · REVIEW</div>
+    <h2 class="step-title">🏅 Level ${level.id} Complete: ${esc(level.title)}</h2>
+    <div class="good" style="margin-bottom:4px">🧠 Core mental model of this level: ${level.summary}</div>
+    <div class="review-grid">
+      <div class="card"><h3>📌 Key Concepts</h3><ul>${conceptItems || "<li>见上。</li>"}</ul></div>
+      <div class="card"><h3>⚠️ Common Mistakes</h3><ul>${mistakeItems || "<li>—</li>"}</ul></div>
+    </div>
+    ${cmdRows ? `<div class="card"><h3>⌨️ Commands to Remember</h3><table class="cmd-table"><tr><th>命令</th><th>英文全称</th><th>作用</th></tr>${cmdRows}</table></div>` : ""}
+    ${termsRows ? `<div class="card"><h3>🔤 Key Terms (auto-added to your Glossary)</h3><table class="term-table">${termsRows}</table></div>` : ""}
+    ${quizzes ? `<h2 class="step-title" style="font-size:19px;margin-top:22px">✏️ Quick Self-Test</h2>` + quizzes : ""}
+    <div class="card" style="margin-top:18px">
+      <h3>🙋 Ask about this Level</h3>
+      <p style="color:var(--dim);font-size:13px">Ask in English or Chinese. The assistant gives a hint and a guiding question first — the full answer stays hidden until you ask for it. 它会先给提示和引导问题，完整答案默认折叠。</p>
+      <textarea id="qaInput" rows="2" placeholder="e.g. Why is a Windows path C:\Users\YOGA but /mnt/c/Users/YOGA in WSL?" style="width:100%;background:#010409;border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 12px;font-size:14px;font-family:inherit;resize:vertical"></textarea>
+      <div style="margin-top:10px"><button class="btn primary" id="qaAsk">Ask</button></div>
+      <div id="qaOut" style="margin-top:12px"></div>
+    </div>
+    <div class="step-nav">
+      <button class="btn" id="reviewReplay">↺ Practice Again</button>
+      <button class="btn" id="reviewBack">Back to Learning</button>
+      <button class="btn success" id="reviewNext" style="font-size:15px;padding:12px 22px">${hasNext ? `Start Level ${LEVELS[li + 1].id}: ${esc(LEVELS[li + 1].title)} →` : "Course Summary"}</button>
+    </div>`;
+  stepContent.querySelectorAll(".opt").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const qi = Number(btn.dataset.q), oi = Number(btn.dataset.i);
+      const q = rv.quiz[qi], fb = document.getElementById("rq-" + qi);
+      if(q.options[oi].ok){
+        btn.classList.add("correct");
+        btn.parentElement.querySelectorAll(".opt").forEach(b => b.disabled = true);
+        fb.className = "feedback show ok";
+        fb.innerHTML = "✅ Correct! " + (q.options[oi].why || "");
+      } else {
+        btn.classList.add("wrong");
+        btn.disabled = true;
+        fb.className = "feedback show no";
+        fb.innerHTML = "❌ Not quite. " + (q.options[oi].why || "Check the summary above and try again.");
+      }
+    });
+  });
+  document.getElementById("reviewReplay").addEventListener("click", () => {
+    store.level = li; store.step = 0; delete store.completed[li]; saveStore(); resetTerminal(true); render();
+  });
+  document.getElementById("reviewBack").addEventListener("click", () => { render(); });
+  document.getElementById("reviewNext").addEventListener("click", () => {
+    if(hasNext){ store.level = li + 1; store.step = 0; saveStore(); render(); }
+    else renderCourseEnd();
+  });
+  const qaAsk = document.getElementById("qaAsk");
+  if(qaAsk){
+    const fireQuestion = () => {
+      const q = document.getElementById("qaInput").value.trim();
+      if(!q) return;
+      const r = learningAssistant(level.id, q);
+      document.getElementById("qaOut").innerHTML =
+        `<div class="good" style="text-align:left">💡 <strong>Hint:</strong> ${r.hint}<br><br>🤔 <strong>Think about it:</strong> ${r.question}</div>` +
+        (r.spoiler ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--dim);font-size:13px">📝 Show full answer · 看完整答案</summary><div class="card" style="margin-top:8px"><p>${r.spoiler}</p></div></details>` : "") +
+        `<p style="color:var(--dim);font-size:11px;margin-top:8px">Phase 1 · built-in guide mode — a real AI answer engine connects after deployment.</p>`;
+    };
+    qaAsk.addEventListener("click", fireQuestion);
+    document.getElementById("qaInput").addEventListener("keydown", (e) => { if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); fireQuestion(); } });
+  }
+  stepContent.scrollTop = 0;
+  renderSidebar();
+}
+
+function renderCourseEnd(){
+  terminalDock.classList.add("hidden");
+  stepContent.innerHTML = `
+    <div class="complete-hero">
+      <div class="big">🎓</div>
+      <h2>You've completed Levels 0–3!</h2>
+      <p>You've built the first four mental models: what a computer is doing, files &amp; folders, paths, and the terminal with its current directory.<br><br>
+      你已经建立了前四个 mental model。这个项目是你的「计算机基础训练场」——左侧 🗺️ Roadmap 里有 Module A～I 的完整规划，会按依赖关系逐批更新。</p>
+      <button class="btn" id="backToStart">↺ Review from Level 0</button>
+    </div>`;
+  document.getElementById("backToStart").addEventListener("click", () => {
+    store.level = 0; store.step = 0; saveStore(); render();
+  });
+}
+
+/* ---------- 侧边栏 ---------- */
+function renderSidebar(){
+  const list = document.getElementById("levelList");
+  let h = "";
+  LEVELS.forEach((l, i) => {
+    const done = levelDone(i);
+    const unlocked = levelUnlocked(i);
+    const cur = i === store.level;
+    h += `<div class="level-item ${done ? "done" : ""} ${cur ? "current active" : ""} ${!unlocked ? "locked" : ""}" data-i="${i}">
+      <button class="lv-main" data-i="${i}" ${!unlocked ? "disabled" : ""}>
+      <span class="lv-badge">${done ? "✓" : unlocked ? l.id : "🔒"}</span>
+      <span style="min-width:0"><span class="lv-title">Level ${l.id} · ${esc(l.title)}</span><br>
+      <span class="lv-en">${esc(l.en)}</span><br>
+      <span class="lv-steps">${done ? "Done · tap 📖 to review" : cur ? `In progress ${Math.min(store.step + 1, l.steps.length)}/${l.steps.length}` : unlocked ? "Not started" : "Finish the previous level to unlock"}</span></span>
+      </button>
+      ${done ? `<button class="lv-review" data-review="${i}" title="打开本关复习总结">📖</button>` : ""}
+    </div>`;
+  });
+  list.innerHTML = h;
+  list.querySelectorAll(".lv-main:not(:disabled)").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.i);
+      store.level = i;
+      store.step = Math.min(store.completed[i] != null ? store.completed[i] : 0, LEVELS[i].steps.length - 1);
+      saveStore(); closeSide(); render();
+    });
+  });
+  list.querySelectorAll(".lv-review").forEach(btn => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); closeSide(); renderReview(Number(btn.dataset.review)); });
+  });
+  const pct = Math.round(completedCount() / totalSteps() * 100);
+  document.getElementById("progressFill").style.width = pct + "%";
+  document.getElementById("progressText").textContent = pct + "%";
+}
+
+document.getElementById("resetAll").addEventListener("click", () => {
+  if(confirm("Reset ALL learning progress and start over from Level 0?")){
+    store = { level: 0, step: 0, completed: {} };
+    saveStore(); resetTerminal(true); render();
+  }
+});
+
+/* ---------- 移动端抽屉 ---------- */
+const sidebar = document.getElementById("sidebar");
+const backdrop = document.getElementById("backdrop");
+function closeSide(){ sidebar.classList.remove("open"); backdrop.classList.remove("show"); }
+document.getElementById("menuBtn").addEventListener("click", () => {
+  sidebar.classList.add("open"); backdrop.classList.add("show");
+});
+backdrop.addEventListener("click", closeSide);
+
+/* ---------- 路线图 / 术语本 ---------- */
+document.getElementById("roadmapBtn").addEventListener("click", () => {
+  const html = ROADMAP.map(m => {
+    const available = m.levels.some(id => LEVELS.some(l => l.id === id));
+    return `<div class="mod-item ${available ? "available" : ""}">
+      <div class="mod-head"><span class="mod-name">Module ${m.mod} · ${esc(m.name)}</span><span class="mod-status">${available ? "✅ Open" : "🚧 Coming soon"}</span></div>
+      <div class="mod-levels">${esc(m.desc)}</div></div>`;
+  }).join("") + `<p style="color:var(--dim);font-size:12px;margin-top:6px">💡 定位说明：电脑基础内容服务于两个核心模块——Command Line 与 Git/GitHub，按依赖关系逐批解锁；不追求「电脑维修大全」，目标是 Programming Environment Literacy。</p>`;
+  openOverlay("🗺️ Roadmap · 课程路线图", html);
+});
+document.getElementById("glossaryBtn").addEventListener("click", () => {
+  let rows = "";
+  LEVELS.forEach(l => {
+    const rv = REVIEWS[l.id];
+    if(rv && rv.terms) rv.terms.forEach(t => {
+      rows += `<tr><td class="en">${esc(t.en)}</td><td>${esc(t.zh)}</td><td style="color:var(--dim)">${esc(t.ex || "")}</td></tr>`;
+    });
+  });
+  openOverlay("📖 Glossary · 术语本 (grows with your progress)",
+    `<p style="color:var(--dim);font-size:13px;margin-bottom:12px">Your CS course is bilingual — start getting comfortable reading English terms. You'll see messages like <em>command not found</em> and <em>path does not exist</em> almost every day.</p><table class="term-table">${rows}</table>`);
+});
+document.getElementById("overlayClose").addEventListener("click", closeOverlay);
+document.getElementById("overlay").addEventListener("click", (e) => { if(e.target.id === "overlay") closeOverlay(); });
+
+/* ---------- 进度导出 / 导入（跨设备手动同步） ---------- */
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const data = { app: "cf-playground", version: 1, savedAt: new Date().toISOString(), progress: store };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "cf-playground-progress.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try{
+      const data = JSON.parse(rd.result);
+      const p = data.progress || data;
+      if(p && typeof p === "object" && typeof p.level === "number" && p.completed && typeof p.completed === "object"){
+        store = { level: p.level, step: p.step || 0, completed: p.completed };
+        saveStore(); resetTerminal(true); render();
+        alert("✅ Progress imported. Keep going!");
+      } else { alert("This file is not a progress file for this course."); }
+    }catch(err){ alert("Import failed: the file is not valid JSON."); }
+  };
+  rd.readAsText(f);
+  e.target.value = "";
+});
+
+/* ---------- 启动 ---------- */
+resetTerminal(true);
+render();
+</script>
+</body>
+</html>

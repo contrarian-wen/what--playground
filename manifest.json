@@ -1,0 +1,14 @@
+{
+  "name": "Computer Fundamentals Playground",
+  "short_name": "CF Playground",
+  "description": "计算机基础能力训练场：Computer Literacy → Programming Environment Literacy",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
