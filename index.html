@@ -353,6 +353,11 @@ function createDefaultFS(){
   return {
     "C:": {
       "Windows": { "System32": {} },
+      "Program Files": {
+        "Git": { "cmd": { "git.exe": null } },
+        "MiKTeX": { "miktex": { "bin": { "x64": { "latex.exe": null, "latexmk.exe": null } } } }
+      },
+      "Strawberry": { "perl": { "bin": { "perl.exe": null } } },
       "Users": {
         "YOGA": {
           "Desktop": { "VS Code.lnk": null, "回收站.lnk": null },
@@ -360,6 +365,8 @@ function createDefaultFS(){
           "Downloads": { "LaTeX-Workshop-2026.zip": null, "setup.exe": null },
           "Pictures": { "猫.jpg": null },
           "Music": {},
+          "bin": { "hello-tool.exe": null },
+          "AppData": { "Local": { "Programs": { "Python": { "Python313": { "python.exe": null } } } } },
           "hello.py": null,
           "readme.md": null
         }
@@ -369,7 +376,19 @@ function createDefaultFS(){
 }
 
 function createTermState(){
-  return { cwd: ["C:", "Users", "YOGA"], fs: createDefaultFS() };
+  return {
+    cwd: ["C:", "Users", "YOGA"],
+    fs: createDefaultFS(),
+    // PATH 清单：shell 收到程序名时按顺序逐格搜索的文件夹（有序！）
+    path: [
+      "C:\\Windows\\System32",
+      "C:\\Windows",
+      "C:\\Program Files\\Git\\cmd",
+      "C:\\Program Files\\MiKTeX\\miktex\\bin\\x64",
+      "C:\\Strawberry\\perl\\bin",
+      "C:\\Users\\YOGA\\AppData\\Local\\Programs\\Python\\Python313"
+    ]
+  };
 }
 
 function pathStr(arr){ return arr.join("\\"); }
@@ -537,10 +556,124 @@ function executeCommand(state, line){
     return result;
   }
 
+  if(cmd === "where"){
+    const target = result.args[0];
+    if(!target){
+      result.err = true;
+      result.lines.push({ text: "where: 缺少目标。用法：where <程序名>", cls: "t-err" });
+      return result;
+    }
+    const exeName = target.toLowerCase().endsWith(".exe") ? target : target + ".exe";
+    let found = 0;
+    (state.path || []).forEach(d => {
+      const node = getNode(state.fs, splitPath(d));
+      if(typeof node === "object" && node !== null && exeName in node){
+        result.lines.push({ text: pathStr(splitPath(d).concat(exeName)), cls: "t-ok" });
+        found++;
+      }
+    });
+    if(found === 0){
+      result.err = true;
+      result.lines.push({ text: "INFO: Could not find files for the given pattern(s).", cls: "t-err" });
+      result.lines.push({ text: `（找遍 PATH 清单的每个文件夹，都没有 ${exeName}。程序存在于硬盘 ≠ shell 找得到 —— 它的文件夹在 PATH 里吗？）`, cls: "t-dim" });
+    }
+    return result;
+  }
+
+  if(cmd === "path"){
+    result.lines.push({ text: "PATH=" + (state.path || []).join(";"), cls: "t-ok" });
+    result.lines.push({ text: "(有序清单：shell 从左往右逐格搜索程序，先找到的优先。真实 PowerShell 里用 $env:PATH 查看。)", cls: "t-dim" });
+    return result;
+  }
+
+  if(cmd === "path-add"){
+    const arg = result.args[0];
+    if(!arg){
+      result.err = true;
+      result.lines.push({ text: "path-add: 缺少目标。用法：path-add <文件夹路径>", cls: "t-err" });
+      return result;
+    }
+    const r = resolvePath(state, arg);
+    const node = r ? getNode(state.fs, r) : undefined;
+    if(!r || node === undefined){
+      result.err = true;
+      result.lines.push({ text: `path-add: 找不到路径“${arg}”，因为该路径不存在。`, cls: "t-err" });
+      result.lines.push({ text: "PATH 只能登记真实存在的文件夹——先 ls 确认它在那儿。", cls: "t-dim" });
+      return result;
+    }
+    if(node === null){
+      result.err = true;
+      result.lines.push({ text: `path-add: “${pathStr(r)}” 是一个文件，不是文件夹。PATH 清单里登记的全是文件夹。`, cls: "t-err" });
+      return result;
+    }
+    const p = pathStr(r);
+    const idx = (state.path || []).map(x => x.toLowerCase()).indexOf(p.toLowerCase());
+    if(idx !== -1){
+      result.lines.push({ text: `“${p}” 已经在 PATH 清单里了（第 ${idx + 1} 格）。`, cls: "t-dim" });
+      return result;
+    }
+    state.path.push(p);
+    result.lines.push({ text: `✓ 已加入本窗口的 PATH 副本（第 ${state.path.length} 格）。`, cls: "t-green" });
+    result.lines.push({ text: "(注意「本窗口」：环境变量是每个进程的副本。真实 Windows 里要改系统设置，且已打开的窗口不会自动更新 —— Level 7 详解。)", cls: "t-dim" });
+    return result;
+  }
+
+  if(cmd === "env"){
+    const vars = [
+      ["USERNAME=YOGA", "t-ok"],
+      ["USERPROFILE=C:\\Users\\YOGA", "t-ok"],
+      ["OS=Windows_NT", "t-ok"],
+      ["HOME=C:\\Users\\YOGA", "t-ok"],
+      ["TEMP=C:\\Users\\YOGA\\AppData\\Local\\Temp", "t-ok"],
+      ["PATH=" + (state.path || []).join(";"), "t-ok"]
+    ];
+    vars.forEach(v => result.lines.push({ text: v[0], cls: v[1] }));
+    result.lines.push({ text: "(这是当前进程的环境变量副本——进程出生时 OS 发的便签。真实 PowerShell 里用 ls env: 或 Get-ChildItem Env: 查看。)", cls: "t-dim" });
+    return result;
+  }
+
+  if(cmd === "echo"){
+    result.lines.push({ text: result.args.join(" "), cls: "t-ok" });
+    return result;
+  }
+
   if(cmd === "help"){
     result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
-    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "git --version         - run git, print its version", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
     return result;
+  }
+
+  // ===== PATH 程序运行器 =====
+  // 模拟真实 shell：收到程序名时，按 PATH 清单从上往下逐格找 程序名.exe
+  {
+    const exeName = cmd + ".exe";
+    let foundDir = null;
+    for(const d of (state.path || [])){
+      const segs = splitPath(d);
+      const node = getNode(state.fs, segs);
+      if(typeof node === "object" && node !== null && exeName in node){ foundDir = segs; break; }
+    }
+    if(foundDir){
+      result.resolved = foundDir.concat(exeName);
+      if(cmd === "hello-tool"){
+        result.lines.push({ text: "Hello from hello-tool! 👋", cls: "t-ok" });
+        result.lines.push({ text: "(hello-tool.exe 在 PATH 第 " + ((state.path || []).map(x => x.toLowerCase()).indexOf(pathStr(foundDir).toLowerCase()) + 1) + " 格被找到并运行)", cls: "t-dim" });
+        return result;
+      }
+      if(cmd === "latex" || cmd === "latexmk" || cmd === "perl" || cmd === "python"){
+        const ver = {
+          latex: "MiKTeX-TeX 4.22 (MiKTeX 24.4)",
+          latexmk: "Latexmk, John Collins, 31 Jan. 2025. Version 4.86",
+          perl: "This is perl 5, version 40, subversion 0 (v5.40.0) built for MSWin32-x64-multi-thread",
+          python: "Python 3.13.2"
+        };
+        result.lines.push({ text: ver[cmd], cls: "t-ok" });
+        result.lines.push({ text: "(shell 在 PATH 清单里找到 " + exeName + " —— 它的安装程序早就把文件夹报进了户口)", cls: "t-dim" });
+        return result;
+      }
+      result.lines.push({ text: exeName + " ran.", cls: "t-ok" });
+      return result;
+    }
   }
 
   // 未知命令：模拟 command not found
@@ -1286,6 +1419,302 @@ const LEVELS = [
   ]
 }
 
+,
+{
+  id: 6,
+  module: "02 · Command Line ⭐",
+  title: "Programs & PATH",
+  en: "Programs & PATH",
+  summary: "理解了「安装程序」的本质（复制可执行文件 + 把它的文件夹登记进 PATH）；PATH 是 shell 按顺序搜索的有序清单；会用 where 诊断 command not found。",
+  steps: [
+    { type: "concept",
+      title: "安装一个程序，到底装了什么？",
+      body: `
+        <p>回想你装 Git 的那一刻：下载 → 双击安装程序 → 一路 Next → 完成。那一刻起，你的电脑多了什么？</p>
+        <p>本质上只有两件事：</p>
+        <ul>
+          <li><strong>复制文件</strong>：比如把 <span class="term-inline">git.exe</span> 放进 <span class="term-inline">C:\\Program Files\\Git\\cmd\\</span>。git.exe 就是 <span class="term-inline">executable</span>（可执行文件）——双击能跑的程序文件。</li>
+          <li><strong>登记 PATH</strong>：安装程序把 <span class="term-inline">C:\\Program Files\\Git\\cmd</span> 这个<strong>文件夹</strong>加进一个叫 PATH 的清单。</li>
+        </ul>
+        <p>所以「安装」≠ 魔法。就是 <strong>放文件 + 报户口</strong>。PATH 就是程序的户口本。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="210" viewBox="0 0 660 210">
+          <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#58a6ff"/></marker></defs>
+          <rect x="20" y="30" width="150" height="60" rx="10" fill="#161b22" stroke="#2d333f"/>
+          <text x="95" y="55" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="bold">你输入</text>
+          <text x="95" y="75" fill="#a5d6ff" font-size="15" text-anchor="middle" font-family="Consolas,monospace">git --version</text>
+          <line x1="170" y1="60" x2="215" y2="60" stroke="#58a6ff" stroke-width="2" marker-end="url(#a6)"/>
+          <rect x="217" y="10" width="200" height="150" rx="12" fill="#161b22" stroke="#58a6ff"/>
+          <text x="317" y="34" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">Shell 拿出 PATH 清单</text>
+          <text x="317" y="52" fill="#9aa7b4" font-size="10" text-anchor="middle">（有序！从上到下逐格找）</text>
+          <rect x="232" y="62" width="170" height="20" rx="4" fill="#0d1117" stroke="#2d333f"/>
+          <text x="242" y="76" fill="#9aa7b4" font-size="9" font-family="Consolas,monospace">1. C:\\Windows\\System32</text>
+          <rect x="232" y="86" width="170" height="20" rx="4" fill="#0d1117" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="242" y="100" fill="#3fb950" font-size="9" font-family="Consolas,monospace">2. C:\\Program Files\\Git\\cmd  ✓ git.exe!</text>
+          <rect x="232" y="110" width="170" height="20" rx="4" fill="#0d1117" stroke="#2d333f"/>
+          <text x="242" y="124" fill="#9aa7b4" font-size="9" font-family="Consolas,monospace">3. C:\\Program Files\\MiKTeX\\...</text>
+          <rect x="232" y="134" width="170" height="20" rx="4" fill="#0d1117" stroke="#2d333f"/>
+          <text x="242" y="148" fill="#9aa7b4" font-size="9" font-family="Consolas,monospace">4. C:\\Strawberry\\perl\\bin</text>
+          <line x1="417" y1="96" x2="462" y2="96" stroke="#58a6ff" stroke-width="2" marker-end="url(#a6)"/>
+          <rect x="464" y="30" width="180" height="132" rx="12" fill="#161b22" stroke="#3fb950"/>
+          <text x="554" y="55" fill="#3fb950" font-size="13" text-anchor="middle" font-weight="bold">找到了 → 运行！</text>
+          <text x="554" y="78" fill="#a5d6ff" font-size="12" text-anchor="middle" font-family="Consolas,monospace">git.exe 被执行</text>
+          <text x="554" y="100" fill="#9aa7b4" font-size="11" text-anchor="middle">git version 2.47.1...</text>
+          <text x="554" y="126" fill="#9aa7b4" font-size="11" text-anchor="middle">找不到 → command not found</text>
+        </svg>
+        <div class="cap">PATH = 一份有序文件夹清单。输入程序名时，shell 从上往下逐格找 程序名.exe，找到就运行，找遍都没有才报错。</div>
+        </div>`,
+      key: "<strong>PATH 是有序搜索清单，不是全局魔法。</strong>command not found 的真正含义：找遍 PATH 的每个文件夹，都没有这个 exe。"
+    },
+    { type: "terminal",
+      title: "Try it: where git —— 让 shell 交出 git.exe 的地址",
+      goal: `输入 <code>where git</code>，看看 shell 到底是从哪个文件夹找到 git 的。`,
+      background: `<span class="term-inline">where</span> 是 Windows 的查询命令（Bash 里对应的叫 <span class="term-inline">which</span>）：它会替你在 PATH 清单里搜一遍，把找到的路径打印出来。`,
+      hints: [
+        "where + 空格 + 程序名（不带 .exe）。",
+        "where git",
+        "Answer: <code>where git</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "where",
+      success: "看那个完整路径：C:\\Program Files\\Git\\cmd\\git.exe。你每次输入 git，shell 找到的就是这个文件。程序名 ≠ 程序本身——名字是钥匙，文件才是房子。",
+      internals: "where 把 PATH 清单从头到尾走了一遍，在每格里找 git.exe，把命中的完整路径打印出来。它回答的是：「shell 到底会运行哪个文件？」",
+      breakdown: [
+        { token: "where", label: "program 程序", text: "Windows 的查找工具：在 PATH 清单里搜索程序文件。" },
+        { token: "git", label: "argument 参数", text: "要查的程序名。注意：查的是 git.exe，你不需要打出扩展名。" }
+      ]
+    },
+    { type: "terminal",
+      title: "Try it: path —— 看一眼你机器上的清单",
+      goal: `输入 <code>path</code>，看看这台（虚拟）电脑的 PATH 清单里都有谁。`,
+      background: `PATH 就是 Level 4 那张「户口本」。清单里的每个文件夹，都是 shell 收到陌生程序名时会去敲门的地方。`,
+      hints: [
+        "四个字母，一个单词。",
+        "path —— 就是 PATH 这个变量本身的名字。",
+        "Answer: <code>path</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "path",
+      success: "清单上有 Windows 系统文件夹、Git、MiKTeX、Perl……注意到规律了吗：装过并「报过户口」的程序，它们的文件夹都在这里。",
+      internals: "PATH 是一个字符串：若干个文件夹路径，用分号 ; 拼在一起。shell 收到程序名后按顺序切开逐个搜索。<strong>顺序有意义</strong>——排前面的优先。",
+      breakdown: [
+        { token: "path", label: "program 程序", text: "打印 PATH 清单（模拟器内置命令；真实 PowerShell 里是 $env:PATH）。" }
+      ]
+    },
+    { type: "predict",
+      title: "Predict: 输入 latex 时，shell 去哪找 latex.exe？",
+      scenario: `你输入 <span class="term-inline">latex --version</span>。shell 会<strong>依次</strong>去哪里找 latex.exe？`,
+      options: [
+        { t: "只在你当前的文件夹里找一次", ok: false, why: "当前目录只是搜索路径之一，而且找不到不会就此罢休。" },
+        { t: "在 PATH 清单的每个文件夹里，从上往下按顺序找", ok: true },
+        { t: "搜索整个硬盘（C 盘到 Z 盘）", ok: false, why: "全盘搜索要几分钟——shell 只查 PATH 这一份清单，所以才能瞬间响应。" },
+        { t: "上网下载一个 latex", ok: false, why: "command not found 是本地查找失败，和网络无关。" }
+      ],
+      explain: `答案是 B：PATH 清单是<strong>唯一</strong>的搜索范围，且<strong>有序</strong>——先找到的优先。这也解释了为什么同名程序可能「谁排在前面就用谁」。`
+    },
+    { type: "predict",
+      title: "Predict: 为什么装完 MiKTeX，latex 就能用了？",
+      scenario: `你装好 MiKTeX 后，立刻在 PowerShell 输入 <span class="term-inline">latex --version</span>——成功了。latex.exe 其实躺在 <span class="term-inline">C:\\Program Files\\MiKTeX\\miktex\\bin\\x64\\</span> 里。为什么你不用输完整路径就能运行它？`,
+      options: [
+        { t: "因为安装程序把 MiKTeX 的 bin 文件夹登记进了 PATH", ok: true },
+        { t: "因为 Windows 会自动认识所有 Program Files 里的程序", ok: false, why: "Windows 只认 PATH 清单——没报户口的程序，放在哪都没用。" },
+        { t: "因为 VS Code 记住了 latex 的位置", ok: false, why: "VS Code 是编辑器；你在 PowerShell 里运行 latex 时它根本没参与。" },
+        { t: "因为 .exe 文件放在任何 bin 文件夹都能被找到", ok: false, why: "bin 只是人们约定俗成的名字，对 shell 没有任何特殊含义。" }
+      ],
+      explain: `答案 A。这就是「安装」的第二件事：<strong>报户口</strong>。你之前装好 MiKTeX / Strawberry Perl 后 latex、latexmk、perl 全部立即可用，原因一模一样。你当时感觉「装好了就能用」，背后是 PATH 在干活。`
+    },
+    { type: "predict",
+      title: "Diagnose: 装了却找不到，为什么？",
+      scenario: `你把 hello-tool 装到了 <span class="term-inline">C:\\Users\\YOGA\\bin\\</span>，输入 <span class="term-inline">hello-tool</span> 却得到 <em>command not found</em>。程序明明装了啊？最可能的原因是：`,
+      options: [
+        { t: "程序没有安装成功", ok: false, why: "题目说得很清楚：程序已经在 YOGA\\bin 里了。" },
+        { t: "C:\\Users\\YOGA\\bin 不在 PATH 清单里，shell 根本不会去那里找", ok: true },
+        { t: "需要重启电脑才能用新程序", ok: false, why: "通常不需要——问题在 PATH，不在重启。" },
+        { t: "hello-tool 是 Linux 程序，Windows 运行不了", ok: false, why: "它是 .exe；报错是「找不到」，不是「无法运行」。" }
+      ],
+      explain: `答案 B。command not found 的意思是「找遍 PATH 都没找到」——和「程序是否存在于硬盘上」是两回事。<strong>程序存在 ≠ shell 找得到。</strong>下一关你会亲手修好这个问题。`
+    },
+    { type: "terminal",
+      title: "体验 command not found：hello-tool 不见了",
+      goal: `输入 <code>hello-tool</code>，亲眼看看这个「装好了却找不到」的错误长什么样。`,
+      background: `hello-tool.exe 确实存在于 <span class="term-inline">C:\\Users\\YOGA\\bin</span>，但那个文件夹<strong>不在</strong> PATH 清单里（你可以用 <span class="term-inline">path</span> 复查）。预测一下会发生什么，再执行。`,
+      hints: [
+        "直接输入程序名就行。",
+        "hello-tool —— 然后读错误信息的括号提示。",
+        "Answer: <code>hello-tool</code>"
+      ],
+      validate: (r, s) => r.err && r.cmd === "hello-tool",
+      success: "和 gti 那次错误一样吗？不一样——gti 是拼写错了（程序不存在），这次是程序明明存在，shell 却根本没去它所在的文件夹找。病因不同，药方也不同。",
+      internals: "shell 把 PATH 清单走完了：System32、Windows、Git、MiKTeX、Perl……每格都没有 hello-tool.exe，于是报错。它从头到尾没去过 C:\\Users\\YOGA\\bin——因为清单里没有它。",
+      breakdown: [
+        { token: "hello-tool", label: "program 程序", text: "shell 试图在 PATH 清单里找 hello-tool.exe —— 每格都没有。" }
+      ]
+    }
+  ]
+},
+{
+  id: 7,
+  module: "02 · Command Line ⭐",
+  title: "Environment Variables",
+  en: "Environment Variables",
+  summary: "理解环境变量 = OS 发给每个进程的一张 KEY=VALUE 便签表（PATH 只是其中一张）；每个进程拿自己的副本；会 path-add 修复 command not found 并明白为什么改完要开新窗口。",
+  steps: [
+    { type: "concept",
+      title: "环境变量：每个进程出生时收到的一沓便签",
+      body: `
+        <p><span class="term-inline">环境变量（environment variables）</span>听起来高大上，本质极其朴素：操作系统给<strong>每个进程</strong>准备的一沓 <strong>KEY=VALUE 便签</strong>。</p>
+        <ul>
+          <li><span class="term-inline">USERNAME=YOGA</span> —— 你是谁</li>
+          <li><span class="term-inline">OS=Windows_NT</span> —— 你在什么系统上</li>
+          <li><span class="term-inline">HOME=C:\\Users\\YOGA</span> —— 你的家在哪</li>
+          <li><span class="term-inline">PATH=…一串文件夹…</span> —— shell 去哪些文件夹找程序</li>
+        </ul>
+        <p>进程（比如你的 PowerShell 窗口）一启动就拿到自己那份便签，随时可以翻看。PATH 只是这沓便签里最有名的<strong>一张</strong>。</p>
+        <p><strong>关键点：每个进程拿的是自己的副本。</strong>你在窗口 A 里改便签，窗口 B 完全不知道——它手里的还是出生时那份。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="220" viewBox="0 0 620 220">
+          <rect x="210" y="8" width="200" height="40" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="310" y="33" fill="#d29922" font-size="13" text-anchor="middle" font-weight="bold">OS · 发便签的人</text>
+          <g font-family="Consolas,monospace" font-size="10">
+            <rect x="20" y="90" width="170" height="26" rx="5" fill="#0d1117" stroke="#2d333f"/>
+            <text x="30" y="107" fill="#a5d6ff">USERNAME=YOGA</text>
+            <rect x="20" y="122" width="170" height="26" rx="5" fill="#0d1117" stroke="#2d333f"/>
+            <text x="30" y="139" fill="#a5d6ff">OS=Windows_NT</text>
+            <rect x="20" y="154" width="170" height="26" rx="5" fill="#0d1117" stroke="#58a6ff"/>
+            <text x="30" y="171" fill="#58a6ff">PATH=C:\\Windows\\…;C:\\Program…</text>
+          </g>
+          <rect x="10" y="70" width="190" height="120" rx="10" fill="none" stroke="#3fb950" stroke-dasharray="5 4"/>
+          <text x="105" y="208" fill="#3fb950" font-size="12" text-anchor="middle">进程 A（你的窗口）的副本</text>
+          <g font-family="Consolas,monospace" font-size="10">
+            <rect x="420" y="90" width="170" height="26" rx="5" fill="#0d1117" stroke="#2d333f"/>
+            <text x="430" y="107" fill="#a5d6ff">USERNAME=YOGA</text>
+            <rect x="420" y="122" width="170" height="26" rx="5" fill="#0d1117" stroke="#2d333f"/>
+            <text x="430" y="139" fill="#a5d6ff">OS=Windows_NT</text>
+            <rect x="420" y="154" width="170" height="26" rx="5" fill="#0d1117" stroke="#58a6ff"/>
+            <text x="430" y="171" fill="#58a6ff">PATH=C:\\Windows\\…;C:\\Program…</text>
+          </g>
+          <rect x="410" y="70" width="190" height="120" rx="10" fill="none" stroke="#2d333f" stroke-dasharray="5 4"/>
+          <text x="505" y="208" fill="#9aa7b4" font-size="12" text-anchor="middle">进程 B 的副本（互不相干）</text>
+          <line x1="262" y1="48" x2="105" y2="70" stroke="#2d333f" stroke-width="2"/>
+          <line x1="358" y1="48" x2="505" y2="70" stroke="#2d333f" stroke-width="2"/>
+          <text x="310" y="62" fill="#9aa7b4" font-size="10" text-anchor="middle">每个进程启动时复制一份</text>
+        </svg>
+        <div class="cap">改进程 A 的便签，进程 B 手里的副本纹丝不动——这就是为什么改 PATH 要开新窗口。</div>
+        </div>`,
+      key: "<strong>环境变量 = 每个进程自己的 KEY=VALUE 便签副本。</strong>PATH 只是其中一张。改便签只影响之后出生的进程。"
+    },
+    { type: "terminal",
+      title: "Try it: env —— 翻看进程的便签",
+      goal: `输入 <code>env</code>，找到 USERNAME、OS 和 PATH 三张便签。`,
+      background: `每个进程拿到的便签可以用 <span class="term-inline">env</span>（Bash 风格）翻出来看。真实 PowerShell 里是 <span class="term-inline">Get-ChildItem Env:</span> 或 <span class="term-inline">ls env:</span>——现在先用模拟器的 env。`,
+      hints: [
+        "三个字母。",
+        "env —— environment 的缩写。",
+        "Answer: <code>env</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "env",
+      success: "找到了吗？USERNAME=YOGA、OS=Windows_NT、HOME、PATH。这就是 PowerShell 出生时 OS 发给它的全部身份信息。",
+      internals: "env 打印的是<strong>当前进程</strong>的环境变量副本——不是全局数据库。这也解释了为什么两个窗口可以有不同的 PATH。",
+      breakdown: [
+        { token: "env", label: "program 程序", text: "打印当前进程的环境变量（KEY=VALUE 列表）。" }
+      ]
+    },
+    { type: "terminal",
+      title: "再试一次 hello-tool —— 还是找不到",
+      goal: `再次输入 <code>hello-tool</code>。它还在 C:\\Users\\YOGA\\bin 里躺着，这个文件夹进 PATH 了吗？`,
+      background: `上关的结论：程序存在 ≠ shell 找得到。先确认错误还在，然后下一节我们修它。`,
+      hints: [
+        "直接输入程序名。",
+        "hello-tool",
+        "Answer: <code>hello-tool</code>"
+      ],
+      validate: (r, s) => r.err && r.cmd === "hello-tool",
+      success: "错误还在——因为 PATH 清单还没变。记住这个错误的样子，等会儿它就消失了。",
+      internals: "和上一关完全相同的查找过程：PATH 每格里都没有 hello-tool.exe。改变的钥匙在下一关任务里。",
+      breakdown: [
+        { token: "hello-tool", label: "program 程序", text: "查找再次失败：C:\\Users\\YOGA\\bin 仍然不在 PATH 清单。" }
+      ]
+    },
+    { type: "terminal",
+      title: "修复它：path-add C:\\Users\\YOGA\\bin",
+      goal: `输入 <code>path-add C:\\Users\\YOGA\\bin</code>，把 hello-tool 的家登记进当前窗口的 PATH。`,
+      background: `病根找到了：文件夹没报户口。修复 = 把 <span class="term-inline">C:\\Users\\YOGA\\bin</span> 加进 PATH 清单。<span class="term-inline">path-add</span> 是本模拟器的练习命令（真实 Windows 里要改系统设置里的环境变量，Module 06 会教）。`,
+      hints: [
+        "path-add + 空格 + 文件夹的完整路径。",
+        "路径从盘符开始写：C:\\Users\\YOGA\\bin",
+        "Answer: <code>path-add C:\\Users\\YOGA\\bin</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "path-add" && s.path.indexOf("C:\\Users\\YOGA\\bin") !== -1,
+      success: "✓ 已加入本窗口的 PATH。注意措辞：「本窗口」。现在 PATH 清单里多了 C:\\Users\\YOGA\\bin——shell 终于会去那里敲门了。",
+      internals: "path-add 把新文件夹追加到 PATH 清单末尾。从现在起，shell 查找程序时会多敲一扇门。<strong>清单是进程自己的副本，所以只影响这个窗口。</strong>",
+      breakdown: [
+        { token: "path-add", label: "command 命令（模拟器练习用）", text: "把文件夹追加进当前进程的 PATH 副本。" },
+        { token: "C:\\Users\\YOGA\\bin", label: "argument 参数", text: "要登记进 PATH 的文件夹（绝对路径）。" }
+      ]
+    },
+    { type: "terminal",
+      title: "见证奇迹：hello-tool 复活了",
+      goal: `第三次输入 <code>hello-tool</code>。这次会发生什么？先预测，再执行。`,
+      background: `同一个命令、同一个程序、同一个你——唯一变的是 PATH 清单。如果这次成功了，你就亲手证明了：<strong>command not found 可以是 PATH 的问题，而不是程序的问题。</strong>`,
+      hints: [
+        "和上两次输入一模一样。",
+        "hello-tool",
+        "Answer: <code>hello-tool</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "hello-tool",
+      success: "Hello! 它跟你打招呼了。三次输入完全相同，结果却不同——变量不是命令，是命令运行时的环境。这就是「环境变量」这个名字的由来。",
+      internals: "shell 这次在 PATH 的最后一格 C:\\Users\\YOGA\\bin 里找到了 hello-tool.exe，于是运行它。前两次失败不是命令打错了，是<strong>环境</strong>不同。",
+      breakdown: [
+        { token: "hello-tool", label: "program 程序", text: "这次在 PATH 里找到了 → 成功运行。" }
+      ],
+      beforeAfter: {
+        before: "PATH 清单里没有 C:\\Users\\YOGA\\bin → hello-tool = command not found",
+        after: "PATH 清单里有了它 → hello-tool 正常运行",
+        note: "命令没变，环境变了。诊断 command not found 时，永远先问：它在 PATH 里吗？"
+      }
+    },
+    { type: "predict",
+      title: "Predict: 窗口 B 也会认识 hello-tool 吗？",
+      scenario: `你在<strong>窗口 A</strong> 里 path-add 成功了。旁边还开着一个更早的<strong>窗口 B</strong>。你现在在窗口 B 里输入 <span class="term-inline">hello-tool</span>，会发生什么？`,
+      options: [
+        { t: "成功——PATH 是全局的，所有窗口共享", ok: false, why: "PATH 看起来全局，实际每个进程拿的是自己的副本。" },
+        { t: "失败——窗口 B 出生时的便签里没有 YOGA\\bin，它根本不知道 A 改过", ok: true },
+        { t: "成功，但需要等一分钟同步", ok: false, why: "没有同步机制——进程间互不相干。" },
+        { t: "窗口 B 会自动崩溃重启", ok: false, why: "……Windows 没这么脆弱。" }
+      ],
+      explain: `答案 B。环境变量是<strong>进程出生时复制的快照</strong>。在真实 Windows 里改 PATH 之后，已经打开的终端窗口依然用旧值——所以教程们总是说「改完 PATH 要开一个<strong>新</strong>窗口」。现在你知道为什么了。`
+    },
+    { type: "terminal",
+      title: "回到你的真实经历：latex / latexmk / perl",
+      goal: `任选其一输入：<code>latex --version</code>、<code>latexmk --version</code> 或 <code>perl --version</code>。`,
+      background: `这三个程序<strong>真实存在</strong>于你的电脑上——MiKTeX 装了 latex 和 latexmk，Strawberry Perl 装了 perl。它们都能直接运行，因为安装程序替你把它们的文件夹报进了 PATH。`,
+      hints: [
+        "任选一个：latex、latexmk 或 perl，加 --version。",
+        "比如 latex --version",
+        "Answer: <code>latex --version</code>（或 latexmk / perl）"
+      ],
+      validate: (r, s) => !r.err && ["latex", "latexmk", "perl", "python"].indexOf(r.cmd) !== -1,
+      success: "这些命令你在真实的 PowerShell 里也运行过。当时「装完就能用」的顺滑体验，现在你能逐层拆开：文件被复制到了 bin 文件夹 → 文件夹被登记进 PATH → shell 找得到 → 运行成功。",
+      internals: "MiKTeX 安装时把 miktex\\bin\\x64 加进了 PATH；Strawberry Perl 把 perl\\bin 加了进去。装得「规范」的程序都这样——这就是为什么一台机器上 PATH 清单往往很长。",
+      breakdown: [
+        { token: "latex / latexmk / perl", label: "program 程序", text: "真实安装在你电脑上的程序（模拟器里复刻了它们）。" },
+        { token: "--version", label: "option / flag 选项", text: "老面孔了：打印版本并退出。" }
+      ]
+    },
+    { type: "predict",
+      title: "Final check: 真实 Windows 里改完 PATH 之后，下一步是？",
+      scenario: `你在 Windows 设置里给 PATH 添加了一个新文件夹（比如装了新软件）。然后你需要做什么才能让它生效？`,
+      options: [
+        { t: "什么都不用做，所有窗口立刻生效", ok: false, why: "已打开的窗口拿的还是旧副本。" },
+        { t: "打开一个新的终端窗口（新进程会拿到更新后的便签）", ok: true },
+        { t: "重启电脑（唯一办法）", ok: false, why: "只有极少数系统级修改才需要重启；PATH 开新窗口即可。" },
+        { t: "输入 refresh-path 命令", ok: false, why: "这个命令不存在——没有「刷新」操作，只有「开新进程拿新副本」。" }
+      ],
+      explain: `答案 B。每个进程的环境变量是出生快照；想用上新的 PATH，就让 shell「重新出生」一次——开个新窗口。至此，Command Line 模块的 mental model 闭环：Terminal → Shell → 命令解剖 → PATH → 环境变量。下一站：Git。`
+    }
+  ]
+}
+
 ];
 
 /* ================================================================
@@ -1498,6 +1927,85 @@ const REVIEWS = {
         { t: "The internet is down", ok: false, why: "Nothing here touches the network." } ] }
     ]
   },
+  6: {
+    concepts: [
+      "「安装程序」= 两件事：把 .exe 复制进一个文件夹（常在 …\\bin\\ 或 …\\cmd\\）+ 把那个文件夹登记进 PATH",
+      "PATH 是 shell 唯一的程序搜索范围：一份有序文件夹清单，从上往下逐格找 程序名.exe，先找到的优先",
+      "command not found 的真正含义：找遍 PATH 每个文件夹都没有——程序存在于硬盘 ≠ shell 找得到",
+      "程序名只是钥匙，程序文件才是房子：where 告诉你 shell 会运行哪个文件"
+    ],
+    commands: [
+      { cmd: "where git", en: "—", zh: "在 PATH 清单里搜 git.exe，打印找到的完整路径（Bash 里对应 which）" },
+      { cmd: "path", en: "—", zh: "打印 PATH 清单（真实 PowerShell 里用 $env:PATH）" },
+      { cmd: "hello-tool", en: "—", zh: "体验「装了却找不到」：exe 存在但所在文件夹不在 PATH" }
+    ],
+    terms: [
+      { en: "executable (.exe)", zh: "可执行文件", ex: "双击/输入名字就能运行的程序文件" },
+      { en: "PATH", zh: "程序搜索清单", ex: "有序！逐格找 程序名.exe" },
+      { en: "command not found", zh: "找遍 PATH 都没有", ex: "≠ 程序不存在" },
+      { en: "where / which", zh: "PATH 查询命令", ex: "which 是 Bash 叫法" },
+      { en: "bin folder", zh: "装 exe 的约定俗成文件夹", ex: "只是名字约定，对 shell 无特殊含义" },
+      { en: "installer", zh: "安装程序", ex: "替你「放文件 + 报户口」" }
+    ],
+    mistakes: [
+      "以为程序在硬盘上就能被 shell 找到——没报户口（不在 PATH）就等于不存在",
+      "以为 PATH 是无序集合——顺序有意义，同名程序谁排前面用谁",
+      "把 command not found 一律当拼写错误——有时是程序没装、有时是装了没报户口",
+      "以为「bin」是魔法文件夹——它只是人们约定的名字，PATH 里登记什么文件夹都行"
+    ],
+    quiz: [
+      { q: "装完 MiKTeX 后立刻能运行 latex --version，原因是什么？", options: [
+        { t: "Windows 自动认识 Program Files 里的所有程序", ok: false, why: "Windows 只认 PATH 清单，不做全盘魔法。" },
+        { t: "安装程序把 latex.exe 所在文件夹登记进了 PATH", ok: true, why: "" },
+        { t: "VS Code 记住了 latex 的位置", ok: false, why: "在 PowerShell 里运行 latex 时 VS Code 没参与。" },
+        { t: ".exe 放在任何叫 bin 的文件夹都能被找到", ok: false, why: "bin 只是约定俗成的名字，必须在 PATH 里登记才有用。" } ] },
+      { q: "hello-tool.exe 明明在 C:\\Users\\YOGA\\bin，输入 hello-tool 却 command not found。病因是？", options: [
+        { t: "程序安装失败", ok: false, why: "题目说了它就在硬盘上躺着。" },
+        { t: "C:\\Users\\YOGA\\bin 不在 PATH 清单里，shell 根本不会去那里找", ok: true, why: "" },
+        { t: "必须重启电脑", ok: false, why: "通常不需要——病根在 PATH，不在重启。" },
+        { t: "它是 Linux 程序", ok: false, why: "报错是「找不到」不是「无法运行」。" } ] }
+    ]
+  },
+  7: {
+    concepts: [
+      "环境变量 = OS 发给每个进程的一沓 KEY=VALUE 便签（USERNAME=YOGA、OS=Windows_NT、PATH=…）",
+      "PATH 只是这沓便签里最出名的一张；环境变量的「环境」指的就是命令运行时的 surroundings",
+      "每个进程拿的是自己出生时的副本快照——窗口 A 改了便签，窗口 B 纹丝不动",
+      "所以改完 PATH 要开新窗口：让 shell「重新出生」一次，拿到新便签"
+    ],
+    commands: [
+      { cmd: "env", en: "—", zh: "打印当前进程的环境变量副本（真实 PowerShell：ls env:）" },
+      { cmd: "path", en: "—", zh: "打印 PATH 便签的内容" },
+      { cmd: "path-add C:\\Users\\YOGA\\bin", en: "—", zh: "把文件夹追加进本窗口的 PATH 副本（模拟器练习命令）" }
+    ],
+    terms: [
+      { en: "environment variable", zh: "环境变量", ex: "进程的 KEY=VALUE 便签" },
+      { en: "process", zh: "进程", ex: "跑起来的程序（如一个 PowerShell 窗口）" },
+      { en: "KEY=VALUE", zh: "键=值", ex: "USERNAME=YOGA" },
+      { en: "copy / snapshot", zh: "副本 / 快照", ex: "进程出生时各领一份，互不相干" },
+      { en: "$env:PATH", zh: "PowerShell 查看 PATH 的写法", ex: "$env: 前缀读环境变量" },
+      { en: "path-add", zh: "模拟器练习命令", ex: "真实 Windows 在系统设置里改" }
+    ],
+    mistakes: [
+      "以为 PATH 是全局共享的——每个进程拿的是自己的副本",
+      "改完 PATH 后旧窗口「不生效」就以为改错了——旧窗口拿的是出生快照，开新窗口才对",
+      "以为必须重启电脑——PATH 开新窗口即可，只有极少数系统级修改才要重启",
+      "以为存在 refresh-path 之类的刷新命令——没有刷新，只有「开新进程拿新副本」"
+    ],
+    quiz: [
+      { q: "你在窗口 A 里 path-add 成功。旁边早开的窗口 B 里输入 hello-tool 会怎样？", options: [
+        { t: "成功——PATH 全局共享", ok: false, why: "PATH 看起来全局，实际每个进程拿副本。" },
+        { t: "失败——窗口 B 的出生便签里没有 YOGA\\bin，它不知道 A 改过", ok: true, why: "" },
+        { t: "成功，等一分钟自动同步", ok: false, why: "进程间没有同步机制。" },
+        { t: "窗口 B 崩溃重启", ok: false, why: "Windows 没这么脆弱。" } ] },
+      { q: "真实 Windows 里改完 PATH，下一步做什么让它生效？", options: [
+        { t: "什么都不用做，所有窗口立刻生效", ok: false, why: "已打开的窗口拿的还是旧副本。" },
+        { t: "打开一个新的终端窗口", ok: true, why: "" },
+        { t: "重启电脑（唯一办法）", ok: false, why: "PATH 开新窗口即可。" },
+        { t: "输入 refresh-path 命令", ok: false, why: "这个命令不存在——没有刷新操作。" } ] }
+    ]
+  }
+
 };
 
 const ROADMAP = [
@@ -1505,7 +2013,7 @@ const ROADMAP = [
   { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
   { mod: "C", name: "Programs, PATH & Environment · 程序与 PATH", levels: [6,7], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量（为什么 latex --version 能找到 latex）" },
   { mod: "D", name: "Git & GitHub", levels: [8,9,10,11,12,13,14], desc: "Level 8 Git mental model → 9 GitHub → 10 Repository → 11 clone/status/add/commit → 12 remote/push/pull（含 fetch vs pull 可视化）→ 13 分支与合并 → 14 阅读真实仓库 LaTeX-Workshop-2026" },
-  { mod: "E", name: "Development Environment · 开发环境", levels: [15,16], desc: "Level 15 VS Code 与开发环境 → Level 16 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）" },
+  { mod: "E", name: "Development Environment · 开发环境", levels: [15,16], desc: "Level 15 VS Code 与开发环境 → Level 16 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
   { mod: "F", name: "Network Basics · 网络基础", levels: [17,18], desc: "Level 17 IP / DNS / 网络连接 → Level 18 ping / ipconfig / nslookup / 代理" },
   { mod: "G", name: "Windows System Tools · Windows 系统工具", levels: [19,20], desc: "Level 19 任务管理器 / 进程 / CPU·内存·磁盘 → Level 20 环境变量界面 / 权限 / Administrator" },
   { mod: "H", name: "WSL & Linux Basics", levels: [21], desc: "Level 21 WSL → Ubuntu → Bash：Windows 里跑 Linux，以及三套命令为何不同" },
