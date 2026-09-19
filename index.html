@@ -235,6 +235,52 @@ h2.step-title{font-size:24px;margin-bottom:20px;line-height:1.35}
   .overlay-card{max-height:92vh}
 }
 #termOut,#stepContent,.overlay-body{-webkit-overflow-scrolling:touch}
+
+
+/* 全局深色滚动条：统一色调，消灭默认白条 */
+*{scrollbar-width:thin;scrollbar-color:#30363d #0d1117}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#0d1117}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:99px;border:2px solid #0d1117}
+::-webkit-scrollbar-thumb:hover{background:#3d444d}
+::-webkit-scrollbar-corner{background:#0d1117}
+/* ============ v1.1：开放进度 + 响应式打磨 ============ */
+.lv-title-wrap{min-width:0;flex:1;text-align:left}
+.lv-dots{display:inline-flex;gap:3px;margin-top:5px}
+.lv-dot{width:15px;height:15px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;background:var(--panel);border:1px solid var(--border);color:var(--dim);font-size:9px;line-height:1}
+.lv-dot.d-done{color:var(--green);border-color:rgba(63,185,80,.55)}
+.lv-dot.d-cur{color:var(--accent);border-color:var(--accent)}
+.lv-pct{font-family:var(--mono);font-size:12px;color:var(--dim);align-self:center;flex-shrink:0;padding-left:6px}
+.lv-sidebtns{display:flex;flex-direction:column;gap:4px;align-self:center;flex-shrink:0}
+.lv-mini{background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:11px;padding:3px 6px;line-height:1}
+.lv-mini:hover{border-color:var(--green)}
+/* clamp() 流式排版 */
+h2.step-title{font-size:clamp(20px,2.6vw,26px)}
+#stepContent{padding:clamp(18px,3vw,36px) clamp(16px,4vw,40px) 24px}
+#termOut{height:clamp(130px,26vh,210px)}
+/* 溢出兜底 */
+.card{overflow-wrap:break-word}
+.filetree{overflow-x:auto}
+.card{overflow-x:auto}
+.opt pre{max-width:100%;overflow-x:auto}
+.ba .ba-box{min-width:0}
+.lv-main{min-width:0}
+/* 平板断点 */
+@media (min-width:861px) and (max-width:1150px){
+  aside{width:264px;min-width:264px}
+  #stepContent{max-width:100%}
+}
+/* 超宽屏：内容不无限拉伸 */
+@media (min-width:1500px){
+  #stepContent{max-width:980px}
+}
+/* 触屏目标尺寸 */
+@media (max-width:860px){
+  .btn,.opt{min-height:44px}
+  .lv-mini{padding:6px 8px;font-size:12px}
+  .lv-dot{width:17px;height:17px;font-size:10px}
+  .overlay-body{padding:14px}
+}
 </style>
 </head>
 <body>
@@ -1051,7 +1097,6 @@ function completedCount(){
   return n;
 }
 function levelDone(i){ return store.completed[i] != null && store.completed[i] >= LEVELS[i].steps.length - 1; }
-function levelUnlocked(i){ return i === 0 || levelDone(i - 1); }
 
 function markStepDone(li, si){
   if((store.completed[li] || 0) < si) store.completed[li] = si;
@@ -1485,40 +1530,104 @@ function renderCourseEnd(){
   });
 }
 
+/* ---------- 进度架构（v1.1）：Progress 与 Access 分离 ----------
+   store.completed[li] = 该关已完成的最大步骤下标（schema 未变，旧数据兼容）。
+   课程级访问完全开放；关内线性推进由「跳转到第一个未完成步骤」保证。 */
+function levelProgress(i){
+  const l = LEVELS[i];
+  const doneCount = Math.min(store.completed[i] != null ? store.completed[i] + 1 : 0, l.steps.length);
+  return { doneCount, pct: Math.round(doneCount / l.steps.length * 100), complete: doneCount === l.steps.length };
+}
+function levelStepDotsHTML(li){
+  const l = LEVELS[li];
+  const pr = levelProgress(li);
+  // 当前关高亮 store.step（正在看的位置）；其他关高亮「下一个待学步骤」
+  const cur = pr.complete ? -1 : (li === store.level ? Math.min(store.step, l.steps.length - 1) : pr.doneCount);
+  let h = '<span class="lv-dots" title="steps are linear within a level">';
+  for(let i = 0; i < l.steps.length; i++){
+    const cls = i < pr.doneCount ? "d-done" : (i === cur ? "d-cur" : "d-todo");
+    h += `<span class="lv-dot ${cls}">${i < pr.doneCount ? "✓" : (i === cur ? "→" : "·")}</span>`;
+  }
+  return h + "</span>";
+}
+
 /* ---------- 侧边栏 ---------- */
 function renderSidebar(){
   const list = document.getElementById("levelList");
   let h = "";
   LEVELS.forEach((l, i) => {
-    const done = levelDone(i);
-    const unlocked = levelUnlocked(i);
+    const pr = levelProgress(i);
     const cur = i === store.level;
-    h += `<div class="level-item ${done ? "done" : ""} ${cur ? "current active" : ""} ${!unlocked ? "locked" : ""}" data-i="${i}">
-      <button class="lv-main" data-i="${i}" ${!unlocked ? "disabled" : ""}>
-      <span class="lv-badge">${done ? "✓" : unlocked ? l.id : "🔒"}</span>
-      <span style="min-width:0"><span class="lv-title">Level ${l.id} · ${esc(l.title)}</span><br>
-      <span class="lv-en">${esc(l.en)}</span><br>
-      <span class="lv-steps">${done ? "Done · tap 📖 to review" : cur ? `In progress ${Math.min(store.step + 1, l.steps.length)}/${l.steps.length}` : unlocked ? "Not started" : "Finish the previous level to unlock"}</span></span>
+    const status = pr.complete ? "completed" : (pr.pct > 0 ? "in progress" : "not started");
+    h += `<div class="level-item ${pr.complete ? "done" : ""} ${cur ? "current active" : ""}" data-i="${i}">
+      <button class="lv-main" data-i="${i}">
+      <span class="lv-badge">${pr.complete ? "✓" : l.id}</span>
+      <span class="lv-title-wrap"><span class="lv-title">Level ${l.id} · ${esc(l.title)}</span><br>
+      <span class="lv-en">${esc(l.en)} · ${status}</span><br>
+      ${levelStepDotsHTML(i)}</span>
+      <span class="lv-pct">${pr.pct}%</span>
       </button>
-      ${done ? `<button class="lv-review" data-review="${i}" title="打开本关复习总结">📖</button>` : ""}
+      <span class="lv-sidebtns">${pr.complete ? `<button class="lv-mini" data-review="${i}" title="Review this level">📖</button>` : ""}<button class="lv-mini" data-reset="${i}" title="Reset this level">↺</button></span>
     </div>`;
   });
   list.innerHTML = h;
-  list.querySelectorAll(".lv-main:not(:disabled)").forEach(btn => {
+  // 课程级访问完全开放：点击 = 跳到该关第一个未完成步骤（已完成 → 直接进 Review）
+  list.querySelectorAll(".lv-main").forEach(btn => {
     btn.addEventListener("click", () => {
       const i = Number(btn.dataset.i);
+      const pr = levelProgress(i);
       store.level = i;
-      store.step = Math.min(store.completed[i] != null ? store.completed[i] : 0, LEVELS[i].steps.length - 1);
-      saveStore(); closeSide(); render();
+      saveStore(); closeSide();
+      if(pr.complete){ renderReview(i); }
+      else { store.step = Math.min(pr.doneCount, LEVELS[i].steps.length - 1); saveStore(); render(); }
     });
   });
-  list.querySelectorAll(".lv-review").forEach(btn => {
+  list.querySelectorAll(".lv-mini[data-review]").forEach(btn => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); closeSide(); renderReview(Number(btn.dataset.review)); });
+  });
+  list.querySelectorAll(".lv-mini[data-reset]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const i = Number(btn.dataset.reset);
+      if(!confirm(`Reset progress of Level ${LEVELS[i].id} (${LEVELS[i].title})? Other levels are not affected.`)) return;
+      delete store.completed[i];
+      if(store.level === i) store.step = 0;
+      saveStore(); resetTerminal(true); render();
+    });
   });
   const pct = Math.round(completedCount() / totalSteps() * 100);
   document.getElementById("progressFill").style.width = pct + "%";
   document.getElementById("progressText").textContent = pct + "%";
 }
+
+/* ---------- Debug Mode（隐藏入口：Ctrl+Shift+D，不影响普通用户） ---------- */
+function renderDebug(){
+  const html = `<p style="color:var(--dim);font-size:13px;margin-bottom:12px">🛠 Debug tools for development. Entry: <span class="term-inline">Ctrl+Shift+D</span>. Normal users never see this unless they press it.</p>` +
+    LEVELS.map((l, i) => {
+      const pr = levelProgress(i);
+      return `<div class="mod-item"><div class="mod-head"><span class="mod-name">Level ${l.id} · ${esc(l.title)}</span><span class="mod-status">${pr.doneCount}/${l.steps.length} steps</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <button class="btn" data-dbg="jump" data-i="${i}">Jump to level</button>
+        <button class="btn" data-dbg="complete" data-i="${i}">Mark 100%</button>
+        <button class="btn" data-dbg="clear" data-i="${i}">Reset level</button>
+      </div></div>`;
+    }).join("") +
+    `<div style="margin-top:10px"><button class="btn" data-dbg="wipe">Wipe ALL progress</button></div>`;
+  openOverlay("🛠 Debug Mode", html);
+  document.getElementById("overlayBody").querySelectorAll("[data-dbg]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const act = btn.dataset.dbg, i = Number(btn.dataset.i);
+      if(act === "jump"){ store.level = i; store.step = Math.min(levelProgress(i).doneCount, LEVELS[i].steps.length - 1); }
+      if(act === "complete"){ store.completed[i] = LEVELS[i].steps.length - 1; store.level = i; store.step = 0; }
+      if(act === "clear"){ delete store.completed[i]; if(store.level === i) store.step = 0; }
+      if(act === "wipe"){ if(confirm("Wipe ALL progress?")){ store = { level: 0, step: 0, completed: {} }; } }
+      saveStore(); resetTerminal(true); closeOverlay(); render();
+    });
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if(e.ctrlKey && e.shiftKey && (e.key === "D" || e.key === "d")){ e.preventDefault(); renderDebug(); }
+});
 
 document.getElementById("resetAll").addEventListener("click", () => {
   if(confirm("Reset ALL learning progress and start over from Level 0?")){
