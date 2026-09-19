@@ -244,6 +244,12 @@ h2.step-title{font-size:24px;margin-bottom:20px;line-height:1.35}
 ::-webkit-scrollbar-thumb{background:#30363d;border-radius:99px;border:2px solid #0d1117}
 ::-webkit-scrollbar-thumb:hover{background:#3d444d}
 ::-webkit-scrollbar-corner{background:#0d1117}
+
+/* v1.2：Module 分组 + 中文按需显示 */
+.mod-header{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:700;padding:14px 10px 4px}
+.zh-inline{display:none;color:var(--dim);font-size:.92em}
+body.show-zh .zh-inline{display:inline}
+body.show-zh .zh-inline.zh-block{display:block;margin-top:6px}
 /* ============ v1.1：开放进度 + 响应式打磨 ============ */
 .lv-title-wrap{min-width:0;flex:1;text-align:left}
 .lv-dots{display:inline-flex;gap:3px;margin-top:5px}
@@ -300,6 +306,7 @@ h2.step-title{font-size:clamp(20px,2.6vw,26px)}
       <button class="tool-btn" id="glossaryBtn">📖 Glossary</button>
       <button class="tool-btn" id="exportBtn">⬇ Export</button>
       <button class="tool-btn" id="importBtn">⬆ Import</button>
+      <button class="tool-btn" id="zhToggle">💡 中文</button>
       <input type="file" id="importFile" accept=".json" style="display:none">
     </div>
     <button class="reset-btn" id="resetAll">↺ Reset Progress</button>
@@ -345,6 +352,7 @@ h2.step-title{font-size:clamp(20px,2.6vw,26px)}
 function createDefaultFS(){
   return {
     "C:": {
+      "Windows": { "System32": {} },
       "Users": {
         "YOGA": {
           "Desktop": { "VS Code.lnk": null, "回收站.lnk": null },
@@ -413,10 +421,19 @@ function executeCommand(state, line){
   const tokens = trimmed.split(/\s+/);
   result.cmd = tokens[0].toLowerCase();
   result.args = tokens.slice(1);
+  // PowerShell 原生名（Verb-Noun）映射到 Bash 风格实现：同一行为，不同名字（alias 概念）
+  const PS_NATIVE = {
+    "get-location":  { to: "pwd", note: "(Get-Location is PowerShell's native name; Bash calls the same behavior 'pwd')" },
+    "get-childitem": { to: "ls",  note: "(Get-ChildItem is PowerShell's native name; in PowerShell even 'ls' is an alias for it)" },
+    "set-location":  { to: "cd",  note: "(Set-Location is PowerShell's native name; 'cd' is an alias for it)" }
+  };
+  let nativeNote = "";
+  if(PS_NATIVE[result.cmd]){ nativeNote = PS_NATIVE[result.cmd].note; result.cmd = PS_NATIVE[result.cmd].to; }
   const cmd = result.cmd;
 
   if(cmd === "pwd"){
     result.lines.push({ text: pathStr(state.cwd), cls: "t-ok" });
+    if(nativeNote) result.lines.push({ text: nativeNote, cls: "t-dim" });
     return result;
   }
 
@@ -473,14 +490,56 @@ function executeCommand(state, line){
       result.lines.push({ text: "cd 只能进入文件夹，不能进入文件。", cls: "t-dim" });
       return result;
     }
+    if(r.length >= 2 && r[0] === "C:" && r[1] === "Windows"){
+      result.err = true;
+      result.lines.push({ text: `cd: 访问被拒绝 (Access denied / Permission denied): ${pathStr(r)}`, cls: "t-err" });
+      result.lines.push({ text: "（路径真实存在——是你的账户不被允许。Permission denied ≠ not found。需要 Administrator 权限，见 Module 06。）", cls: "t-dim" });
+      return result;
+    }
     state.cwd = r;
     result.cwdAfter = r.slice();
     return result;
   }
 
+  if(cmd === "git"){
+    const sub = (result.args[0] || "").toLowerCase();
+    if(sub === "--version" || sub === "-v" || sub === "version"){
+      result.lines.push({ text: "git version 2.47.1.windows.1", cls: "t-ok" });
+      return result;
+    }
+    if(sub === ""){
+      result.lines.push({ text: "usage: git [-v | --version] [-h | --help] <command> [<args>]", cls: "t-ok" });
+      result.lines.push({ text: "(git 在等你告诉它做什么：commit? push? 子命令是 Level 8+ 的内容)", cls: "t-dim" });
+      return result;
+    }
+    // 其他子命令：尚未初始化仓库 → 经典错误体验
+    result.err = true;
+    result.lines.push({ text: "fatal: not a git repository (or any of the parent directories): .git", cls: "t-err" });
+    result.lines.push({ text: "(致命错误：当前文件夹不是 git 仓库。git 只能在一个 repository 里工作 —— Module 03 详解。)", cls: "t-dim" });
+    return result;
+  }
+
+  if(cmd === "mkdir"){
+    if(result.args.length === 0){
+      result.err = true;
+      result.lines.push({ text: "mkdir: 缺少目标。用法：mkdir <文件夹名>", cls: "t-err" });
+      return result;
+    }
+    const name = result.args[0];
+    const curNode = getNode(state.fs, state.cwd);
+    if(name in curNode){
+      result.err = true;
+      result.lines.push({ text: `mkdir: 无法创建目录“${name}”：已存在同名成员。`, cls: "t-err" });
+      return result;
+    }
+    curNode[name] = {};
+    result.lines.push({ text: `已创建文件夹 ${pathStr(state.cwd.concat(name))}\\`, cls: "t-green" });
+    return result;
+  }
+
   if(cmd === "help"){
     result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
-    ["pwd  - 打印当前所在路径", "ls   - 列出当前文件夹的成员", "cd   - 进入某个文件夹"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "git --version         - run git, print its version", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
     return result;
   }
 
@@ -510,6 +569,7 @@ function treeMini(pairs){
 const LEVELS = [
 {
   id: 0,
+  module: "01 · Computer Basics",
   title: "你到底在操作什么？",
   en: "What are you actually operating?",
   summary: "建立了第一个 mental model：电脑 = 硬盘（仓库）+ 内存（工作台）+ CPU（大脑），程序是一份被执行的指令清单。",
@@ -582,6 +642,7 @@ const LEVELS = [
 },
 {
   id: 1,
+  module: "01 · Computer Basics",
   title: "文件和文件夹",
   en: "Files & Folders",
   summary: "理解了文件（有名字的内容）和文件夹（容器）的关系，以及硬盘上的文件是「树」状组织的。",
@@ -663,6 +724,7 @@ const LEVELS = [
 ,
 {
   id: 2,
+  module: "01 · Computer Basics",
   title: "路径 —— 文件的地址",
   en: "Paths",
   summary: "掌握了路径（文件的地址）的写法：盘符\\用户\\文件夹\\文件名，以及绝对路径与相对路径的区别和 .. 的含义。",
@@ -737,6 +799,7 @@ const LEVELS = [
 },
 {
   id: 3,
+  module: "02 · Command Line ⭐",
   title: "Terminal 是什么",
   en: "What is a Terminal?",
   summary: "理解了终端 = 用文字给电脑下指令；会用了 pwd / ls / cd，知道 cd 只改变「当前位置」不移动文件，并学会阅读错误信息。",
@@ -895,7 +958,334 @@ const LEVELS = [
       explain: `答案 <strong>pwd</strong>。Level 3 结束！你已经会 pwd（我在哪）、ls（这有什么）、cd（我去那边）三个命令，还学会了读报错。<br><br>下一关 Level 4 会带你认识真正的 PowerShell 窗口，然后一路杀向 Git。`
     }
   ]
+},
+{
+  id: 4,
+  module: "02 · Command Line ⭐",
+  title: "Terminal / Shell / Command",
+  en: "Terminal, Shell & Command",
+  summary: "建立了核心 mental model：Terminal（窗口）≠ Shell（解释命令的程序）≠ OS（管硬件的系统）；命令是你说的话，程序是真正干活的东西。",
+  steps: [
+    { type: "concept",
+      title: "The dark window is actually TWO things",
+      bodyEn: `
+        <p>When you type into that dark window, <strong>two separate pieces of software</strong> are cooperating:</p>
+        <ul>
+          <li>The <strong>terminal</strong> is the <em>window</em>. It draws the box, captures your keyboard, displays text. That's all — it understands <strong>zero</strong> commands by itself.</li>
+          <li>The <strong>shell</strong> is a <em>program living inside</em> the window. It reads each line you type, interprets what you want, and arranges for it to happen.</li>
+        </ul>
+        <p>Proof they are separate: one terminal app can host many different shells — and one shell can run inside many different terminal apps.</p>`,
+      body: `
+        <p>你在那个深色窗口里打字时，其实是<strong>两个独立的软件</strong>在合作：</p>
+        <ul>
+          <li><strong>终端（Terminal）</strong>就是<em>窗口本身</em>：画界面、接键盘、显示文字。仅此而已——它自己一个命令也看不懂。</li>
+          <li><strong>Shell（命令解释器）</strong>是住在窗口<em>里面</em>的程序：逐行读你输入的内容，理解你的意图，并安排执行。</li>
+        </ul>
+        <p>它们相互独立：同一个终端软件可以承载多种 shell；同一种 shell 也可以运行在不同的终端软件里。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="680" height="200" viewBox="0 0 680 200">
+          <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#58a6ff"/></marker></defs>
+          <rect x="10" y="60" width="130" height="70" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="75" y="90" fill="#e6edf3" font-size="14" text-anchor="middle" font-weight="bold">YOU</text>
+          <text x="75" y="112" fill="#9aa7b4" font-size="11" text-anchor="middle">typing a line</text>
+          <line x1="140" y1="95" x2="188" y2="95" stroke="#58a6ff" stroke-width="2" marker-end="url(#a4)"/>
+          <rect x="190" y="40" width="190" height="110" rx="12" fill="#161b22" stroke="#58a6ff"/>
+          <text x="285" y="66" fill="#58a6ff" font-size="14" text-anchor="middle" font-weight="bold">TERMINAL</text>
+          <text x="285" y="86" fill="#9aa7b4" font-size="11" text-anchor="middle">the WINDOW · 只管显示和输入</text>
+          <rect x="205" y="98" width="160" height="40" rx="8" fill="#0d1117" stroke="#3fb950"/>
+          <text x="285" y="116" fill="#3fb950" font-size="13" text-anchor="middle" font-weight="bold">SHELL</text>
+          <text x="285" y="131" fill="#9aa7b4" font-size="10" text-anchor="middle">the INTERPRETER · 读懂命令</text>
+          <line x1="380" y1="95" x2="428" y2="95" stroke="#58a6ff" stroke-width="2" marker-end="url(#a4)"/>
+          <rect x="430" y="60" width="110" height="70" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="485" y="90" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="bold">OS</text>
+          <text x="485" y="110" fill="#9aa7b4" font-size="11" text-anchor="middle">Windows / Linux</text>
+          <line x1="540" y1="95" x2="588" y2="95" stroke="#58a6ff" stroke-width="2" marker-end="url(#a4)"/>
+          <rect x="590" y="60" width="80" height="70" rx="12" fill="#161b22" stroke="#d29922"/>
+          <text x="630" y="88" fill="#d29922" font-size="12" text-anchor="middle" font-weight="bold">PROGRAM</text>
+          <text x="630" y="106" fill="#9aa7b4" font-size="10" text-anchor="middle">git.exe…</text>
+        </svg>
+        <div class="cap">你敲的字先到 Terminal（窗口），交给 Shell（解释器），Shell 请 OS 找到并启动 Program（程序）。</div>
+        </div>`,
+      key: "Terminal = 舞台（窗口，只管显示和输入）。Shell = 演员（读懂并执行命令的程序）。<strong>窗口本身什么都不懂。</strong>"
+    },
+    { type: "concept",
+      title: "One terminal app, many shells — and the OS underneath",
+      bodyEn: `
+        <p>Windows Terminal is a <strong>terminal app</strong> — a window host. Inside it you can open tabs running completely different shells:</p>
+        <ul>
+          <li><strong>PowerShell</strong> — a modern shell, made by Microsoft, ships with Windows.</li>
+          <li><strong>Command Prompt (cmd.exe)</strong> — an older Windows shell, still around.</li>
+          <li><strong>Ubuntu (WSL) → Bash</strong> — the classic Linux/Unix shell, running inside Windows.</li>
+        </ul>
+        <p>And underneath <em>all</em> of them sits <strong>Windows, the operating system</strong>. The OS is not the shell: Windows manages CPU, memory, files and hardware. Every shell is just an ordinary program running on top of it. <span class="zh-inline">操作系统管硬件；Shell 只是运行在 OS 之上的一个普通程序。</span></p>`,
+      body: `
+        <p>Windows Terminal 是一个<strong>终端程序</strong>——窗口的宿主。它里面可以开多个标签页，跑完全不同的 shell：</p>
+        <ul>
+          <li><strong>PowerShell</strong>——微软现代的 shell，Windows 自带。</li>
+          <li><strong>命令提示符（cmd.exe）</strong>——更老的 Windows shell，至今仍在。</li>
+          <li><strong>Ubuntu (WSL) → Bash</strong>——经典的 Linux/Unix shell，运行在 Windows 里面。</li>
+        </ul>
+        <p>而在它们<em>下面</em>的是 <strong>Windows 操作系统</strong>。OS 不是 shell：Windows 管理 CPU、内存、文件和硬件；每个 shell 只是运行在 OS 之上的普通程序。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="240" viewBox="0 0 620 240">
+          <rect x="180" y="10" width="260" height="34" rx="8" fill="#161b22" stroke="#58a6ff"/>
+          <text x="310" y="32" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">Windows Terminal · 终端程序（只是窗口）</text>
+          <rect x="60" y="70" width="150" height="34" rx="8" fill="#161b22" stroke="#3fb950"/>
+          <text x="135" y="92" fill="#3fb950" font-size="12" text-anchor="middle">PowerShell · shell</text>
+          <rect x="235" y="70" width="150" height="34" rx="8" fill="#161b22" stroke="#2d333f"/>
+          <text x="310" y="92" fill="#e6edf3" font-size="12" text-anchor="middle">cmd.exe · shell</text>
+          <rect x="410" y="70" width="150" height="34" rx="8" fill="#161b22" stroke="#bc8cff"/>
+          <text x="485" y="92" fill="#bc8cff" font-size="12" text-anchor="middle">Ubuntu(WSL) → Bash</text>
+          <line x1="310" y1="44" x2="135" y2="70" stroke="#2d333f" stroke-width="2"/>
+          <line x1="310" y1="44" x2="310" y2="70" stroke="#2d333f" stroke-width="2"/>
+          <line x1="310" y1="44" x2="485" y2="70" stroke="#2d333f" stroke-width="2"/>
+          <line x1="135" y1="104" x2="290" y2="150" stroke="#2d333f" stroke-width="2"/>
+          <line x1="310" y1="104" x2="310" y2="150" stroke="#2d333f" stroke-width="2"/>
+          <line x1="485" y1="104" x2="330" y2="150" stroke="#2d333f" stroke-width="2"/>
+          <rect x="130" y="150" width="360" height="40" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="310" y="168" fill="#d29922" font-size="13" text-anchor="middle" font-weight="bold">Windows · Operating System（管理硬件/资源）</text>
+          <text x="310" y="184" fill="#9aa7b4" font-size="10" text-anchor="middle">每个 shell 都只是跑在 OS 之上的一个普通程序</text>
+        </svg>
+        <div class="cap">Terminal（窗口）承载 Shell（解释器）；所有 Shell 都运行在 OS 之上。三层各管各的。</div>
+        </div>`,
+      key: "<strong>Terminal（窗口）承载 Shell（解释器）；Shell 运行在 OS 之上。</strong>OS 管硬件，Shell 只是它上面的一个程序。"
+    },
+    { type: "predict",
+      title: "Predict: what happens when you type git --version?",
+      scenario: `You open Windows Terminal and type: <span class="term-inline">git --version</span>.<br><br>From what you just learned — what is <strong>actually</strong> happening? <span class="zh-inline">（回忆：窗口不懂命令，解释器才懂。）</span>`,
+      options: [
+        { t: `Windows Terminal itself is Git — the window runs the version check`, ok: false, why: "The terminal is just a window; it understands zero commands." },
+        { t: `The shell (e.g. PowerShell) interprets the command and asks the OS to find and run the program git.exe, which prints its version`, ok: true },
+        { t: `GitHub runs Git on the internet`, ok: false, why: "GitHub is a website. Here git.exe runs on YOUR machine." },
+        { t: `The internet executes Git`, ok: false, why: "No network involved at all — everything happens locally." }
+      ],
+      explain: `Correct: the window only delivered your keystrokes; the <strong>shell</strong> parsed <span class="term-inline">git --version</span>; the <strong>OS</strong> found git.exe (how? PATH — Level 6); the <strong>program</strong> ran, printed its version and exited; the shell showed you the result. Four actors, one line of input.`
+    },
+    { type: "concept",
+      title: "Command ≠ Program: the words vs. the worker",
+      bodyEn: `
+        <p>A <strong>command</strong> is what you type — a line of text in the window. A <strong>program</strong> is a file on disk containing instructions that do the actual work.</p>
+        <p>The shell's job: take the first word of your command, find the program with that name, start it, hand it the rest of the line, and come back when it's done.</p>
+        <p>So <span class="term-inline">git</span> is a <em>command</em> (your text) AND the name of a <em>program</em> (git.exe). Two different roles that happen to share a word. <span class="zh-inline">命令是你说的话；程序是磁盘上干活的文件。Shell 是翻译官兼调度员。</span></p>`,
+      body: `
+        <p><strong>命令（command）</strong>是你输入的东西——窗口里的一行文字。<strong>程序（program）</strong>是磁盘上包含指令、真正干活的文件。</p>
+        <p>Shell 的工作：取你命令的第一个词，找到同名的程序文件，启动它，把行内剩余部分交给它，等它结束后回来。</p>
+        <p>所以 <span class="term-inline">git</span> 既是一个<em>命令</em>（你输入的文字），又是一个<em>程序名</em>（git.exe）——两个角色碰巧共用一个词。</p>`,
+      key: "<strong>Command = 你输入的一行文字。Program = 磁盘上干活的文件。</strong>Shell 是翻译官 + 调度员。"
+    },
+    { type: "terminal",
+      title: "Try it: git --version",
+      goal: `Run <code>git --version</code> in the simulator below and watch what comes back.`,
+      background: `You already typed <span class="term-inline">latex --version</span> on your real PC — same pattern. The shell will look for a program named <strong>git</strong> and run it. Watch the 🔍 token breakdown too.`,
+      hints: [
+        "One program name, a space, then a switch that asks for the version.",
+        "The switch starts with two dashes.",
+        "Answer: <code>git --version</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "git",
+      success: "The shell found git.exe, ran it, it printed its version — then the shell came back for your next command. You never typed a full path. (How did the shell find it? That's PATH — Level 6.)",
+      internals: "① The shell split your line: program name <strong>git</strong> + argument <strong>--version</strong>. ② The OS searched for git.exe and found it. ③ git.exe ran, printed its version, exited. ④ The shell printed a fresh prompt. <strong>Four actors, one line of input.</strong>",
+      breakdown: [
+        { token: "git", label: "program 程序", text: "The program to run. The shell searches for git.exe on disk (via PATH)." },
+        { token: "--version", label: "option / flag 选项", text: "A switch: \"print your version and exit\". Not data — a modifier." }
+      ]
+    },
+    { type: "terminal",
+      title: "Make a mistake on purpose: command not found",
+      goal: `Cause a <code>command not found</code> error deliberately: type <code>gti --version</code> (note the typo). Reading the error is the exercise — red text is a report, not a disaster.`,
+      background: `When the shell can't find a program, it reports exactly that. Your job: trigger the report, then we diagnose it together like detectives.`,
+      hints: [
+        "Type the git command from before, but swap two letters: g-t-i.",
+        "Watch the first word of the error line — who is reporting?",
+        "Answer: <code>gti --version</code>"
+      ],
+      validate: (r, s) => r.err && r.cmd === "gti" || (r.err && /无法将/.test((r.lines[0] || {}).text || "")),
+      success: "That red line is a structured report, not gibberish. Next: two questions to train your error-reading reflex.",
+      internals: "Diagnostic order, every time: ① What command did I actually run? (<strong>gti</strong>) ② Did the shell find the program? (No — 'gti' unrecognized.) ③ Is the program installed? (Irrelevant here.) ④ Is it in PATH? (Level 6.) <strong>First fix: check your spelling.</strong>",
+      breakdown: [
+        { token: "gti", label: "program the shell tried to find", text: "No program called gti exists → lookup failed before anything else ran." },
+        { token: "--version", label: "never reached", text: "The shell stopped at the first word. Later tokens were never processed." }
+      ]
+    },
+    { type: "predict",
+      title: "Quiz: which one of these is a SHELL?",
+      scenario: `Four candidates. Exactly one is a shell. <span class="zh-inline">（提示：shell 是「解释命令的程序」。）</span>`,
+      options: [
+        { t: `Windows Terminal`, ok: false, why: "That's a terminal app — the window that hosts shells." },
+        { t: `PowerShell`, ok: true },
+        { t: `Windows 11`, ok: false, why: "That's an operating system — the layer underneath shells." },
+        { t: `VS Code`, ok: false, why: "An editor. It can EMBED a terminal panel, but it is not a shell itself." }
+      ],
+      explain: `PowerShell is a shell — a program whose job is interpreting your commands. Windows Terminal is the window it runs in; Windows 11 is the OS underneath; VS Code is an editor that happens to have a terminal panel.`
+    },
+    { type: "predict",
+      title: "Predict: two tabs, two shells, one command",
+      scenario: `In Windows Terminal you open two tabs. Tab 1 runs <strong>PowerShell</strong>, Tab 2 runs <strong>Ubuntu (Bash)</strong>. You type <span class="term-inline">ls</span> in both. What happens?`,
+      options: [
+        { t: `ls fails in the PowerShell tab because ls is "a Linux command"`, ok: false, why: "In PowerShell, ls exists too — as an alias for Get-ChildItem." },
+        { t: `Both tabs list files — but by different mechanisms (in PowerShell ls is an alias; in Bash ls is its own program)`, ok: true },
+        { t: `The terminal window itself decides what ls means`, ok: false, why: "The window only forwards text; each SHELL interprets it." },
+        { t: `Both fail, because you must always use Get-ChildItem`, ok: false, why: "Get-ChildItem is PowerShell's native name, but ls works there too." }
+      ],
+      explain: `Correct. The window just delivers characters; each shell gives <span class="term-inline">ls</span> its own meaning. Same word, different machinery behind it — names and behaviors don't map one-to-one across shells. That's exactly what the next level (Command Anatomy) is about.`
+    }
+  ]
+},
+{
+  id: 5,
+  module: "02 · Command Line ⭐",
+  title: "Command Anatomy",
+  en: "Command Anatomy",
+  summary: "会拆解 command / subcommand / option / argument 的常见模式（知道它不是法律）；理解引号把带空格的内容粘成一个 argument、alias 是行为的别名；集齐三类经典错误。",
+  steps: [
+    { type: "concept",
+      title: "Anatomy of: git commit -m \"Finish homework\"",
+      bodyEn: `
+        <p>Meet the most useful pattern in command-line land:</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin:12px 0">
+          <span class="chip role-program"><span class="chip-tok">git</span><span class="chip-role">program · 你运行的程序</span></span>
+          <span class="chip role-subcommand"><span class="chip-tok">commit</span><span class="chip-role">subcommand · git 的哪个动作</span></span>
+          <span class="chip role-option"><span class="chip-tok">-m</span><span class="chip-role">option / flag · 开关</span></span>
+          <span class="chip"><span class="chip-tok">"Finish homework"</span><span class="chip-role">argument · 数据（引号=一个整体）</span></span>
+        </div>
+        <p>Reading any command = naming each part. The 🔍 tokens bar under the simulator does this live for <em>anything</em> you type.</p>`,
+      body: `
+        <p>命令行世界最有用的模式：</p>
+        <ul>
+          <li><strong>git</strong> = program（第一个词，决定要运行哪个程序）</li>
+          <li><strong>commit</strong> = subcommand 子命令（git 有很多动作，commit 是其中之一）</li>
+          <li><strong>-m</strong> = option / flag 选项开关（改变命令行为，不是操作对象）</li>
+          <li><strong>"Finish homework"</strong> = argument 参数（被操作的数据；引号让它是一个整体）</li>
+        </ul>
+        <p>读懂任何命令 = 说出每一部分的名字。模拟器下方的 🔍 tokens 条会对你输入的任何东西实时做这件事。</p>`,
+      key: "先找 program（第一个词）→ subcommand → options（-x / --xxx）→ arguments（被操作的对象）。<strong>引号把带空格的内容粘成一个 argument。</strong>"
+    },
+    { type: "concept",
+      title: "A common pattern — not a law",
+      bodyEn: `
+        <p>⚠️ <strong>Don't over-simplify.</strong> "program + subcommand + option + argument" is a <em>common and useful pattern</em> — not the grammar of every command.</p>
+        <ul>
+          <li><span class="term-inline">pwd</span> — program only. No subcommand, no options, no arguments.</li>
+          <li><span class="term-inline">python hello.py</span> — program + argument. Python has no subcommands at all.</li>
+          <li><span class="term-inline">latexmk 简历.tex</span> — program + argument. (You've actually run this one!)</li>
+        </ul>
+        <p>Each program defines its own grammar. The pattern helps you READ unfamiliar commands; it doesn't force every command to look the same. <span class="zh-inline">模式帮你读陌生命令，但别把模式当语法法律。</span></p>`,
+      body: `
+        <p>⚠️ <strong>不要过度简化。</strong>「program + subcommand + option + argument」是一个<em>常见且有用</em>的模式——不是每条命令的语法法律。</p>
+        <ul>
+          <li><span class="term-inline">pwd</span>——只有 program，没有子命令、选项、参数。</li>
+          <li><span class="term-inline">python hello.py</span>——program + argument，Python 根本没有子命令。</li>
+          <li><span class="term-inline">latexmk 简历.tex</span>——program + argument（这个你真的运行过！）。</li>
+        </ul>
+        <p>每个程序定义自己的语法。这个模式是阅读工具，不是强制格式。</p>`,
+      key: "<strong>模式 ≠ 法律。</strong>pwd 没有参数；python hello.py 没有子命令。每个程序有自己的语法。"
+    },
+    { type: "terminal",
+      title: "Try it: dissect git commit -m",
+      goal: `Type <code>git commit -m "Finish homework"</code> (quotes included!). Watch BOTH the 🔍 token breakdown AND the error you get.`,
+      background: `<span class="term-inline">git commit</span> means "save a snapshot" — but of <em>what</em>? git only works inside a <strong>repository</strong> (a folder containing a <span class="term-inline">.git</span> database). Our virtual folder isn't one yet.`,
+      hints: [
+        "git, space, commit, space, -m, space, then the quoted message — quotes matter!",
+        "The quoted message becomes ONE argument, not two.",
+        "Answer: <code>git commit -m \"Finish homework\"</code>"
+      ],
+      validate: (r, s) => r.err && r.cmd === "git" && /not a git repository/.test((r.lines[0] || {}).text || ""),
+      success: "Perfect — you just produced the single most famous Git error <em>before even learning Git</em>. Notice: your anatomy was flawless; the error is about WHERE you are, not WHAT you typed.",
+      internals: "<span class='term-inline'>fatal: not a git repository (or any of the parent directories): .git</span> — git looked for a .git folder in C:\\Users\\YOGA and every parent folder, found none, and refused to work. The fix (git init / clone) is Module 03. Today the error itself is the lesson.",
+      breakdown: [
+        { token: "git", label: "program 程序", text: "The git program — a toolbox of version-control actions." },
+        { token: "commit", label: "subcommand 子命令", text: "Which action of git: take a snapshot. git alone doesn't know what you want." },
+        { token: "-m", label: "option / flag 选项", text: "Switch: \"the next argument is the commit message\"." },
+        { token: "\"Finish homework\"", label: "argument 参数", text: "The message — ONE argument thanks to the quotes. Without quotes it would be TWO: Finish and homework." }
+      ]
+    },
+    { type: "concept",
+      title: "Options, long forms, and why quotes matter",
+      bodyEn: `
+        <p><strong>Options</strong> (aka <strong>flags</strong>) are switches. Short form, one dash: <span class="term-inline">-m</span>. Long form, two dashes: <span class="term-inline">--message</span>. Same switch, two spellings.</p>
+        <p><strong>Spaces separate arguments. Quotes defeat spaces.</strong> In <span class="term-inline">git commit -m "Finish homework"</span>, the quotes make <em>Finish homework</em> ONE argument. Delete the quotes and the shell hands git TWO arguments: <span class="term-inline">Finish</span> and <span class="term-inline">homework</span> — and -m only takes one.</p>
+        <p>Rule of thumb: if an argument contains spaces, quote it. <span class="zh-inline">空格是参数之间的分界；引号把带空格的内容包成一个参数。</span></p>`,
+      body: `
+        <p><strong>选项（options / flags）</strong>是开关。短形式一个横杠：<span class="term-inline">-m</span>；长形式两个横杠：<span class="term-inline">--message</span>。同一个开关，两种写法。</p>
+        <p><strong>空格分隔参数，引号打败空格。</strong>在 <span class="term-inline">git commit -m "Finish homework"</span> 里，引号让 Finish homework 成为<strong>一个</strong>参数。去掉引号，shell 会递给 git 两个参数：Finish 和 homework——而 -m 只接受一个。</p>
+        <p>经验法则：参数里带空格就加引号。</p>`,
+      key: "-短 --长是同一个开关；<strong>引号把空格粘进同一个 argument。</strong>"
+    },
+    { type: "terminal",
+      title: "Try it: your first disk-writing command — mkdir",
+      goal: `Create a folder named <code>playground</code> in the current directory. Then run <code>ls</code> to verify it really exists.`,
+      background: `pwd / ls / cd only LOOK around. <span class="term-inline">mkdir</span> (make directory) CHANGES the disk — it's your first action command in this simulator.`,
+      hints: [
+        "make directory 的缩写：5 个字母，空格，再加文件夹名。",
+        "mkdir playground —— 然后 ls 验证。",
+        "Answer: <code>mkdir playground</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mkdir" && (() => { const n = getNode(s.fs, s.cwd); return n && ("playground" in n); })(),
+      success: "ls now shows playground\\ — the virtual disk really changed. Notice the contrast: pwd/ls/cd only moved your viewpoint; mkdir wrote to disk.",
+      internals: "① The shell found the mkdir program. ② mkdir asked the OS to create the folder. ③ The OS updated the file tree — a real write, unlike cd which only edits the shell's own note of where you stand.",
+      breakdown: [
+        { token: "mkdir", label: "program 程序", text: "make directory — a program whose whole job is creating folders." },
+        { token: "playground", label: "argument 参数", text: "The new folder's name — the data mkdir operates on." }
+      ]
+    },
+    { type: "predict",
+      title: "Quiz: what is -m?",
+      scenario: `In <span class="term-inline">git commit -m "Finish homework"</span>, what exactly is <span class="term-inline">-m</span>?`,
+      options: [
+        { t: "An argument", ok: false, why: "Arguments are the data being operated on — here that's the quoted message." },
+        { t: "A subcommand", ok: false, why: "The subcommand is commit — it selects git's action." },
+        { t: "An option / flag", ok: true },
+        { t: "The program", ok: false, why: "The program is git — the first word of the line." }
+      ],
+      explain: `-m is an option: a switch that changes how commit behaves ("read the message from the next argument"). Program = git, subcommand = commit, option = -m, argument = "Finish homework".`
+    },
+    { type: "terminal",
+      title: "Try it: two names, one behavior (Get-Location)",
+      goal: `Run <code>Get-Location</code>. Then run <code>pwd</code>. Compare the two outputs.`,
+      background: `PowerShell's native name for "where am I?" is <strong>Get-Location</strong>. <span class="term-inline">pwd</span> is an <strong>alias</strong> — a shortcut name pointing to the same behavior.`,
+      hints: [
+        "PowerShell style: Verb-Noun, written as ONE command name (no space inside it).",
+        "Get-Location — capital G, capital L.",
+        "Answer: <code>Get-Location</code>"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd",
+      success: "Identical output. The behavior lives in ONE program; Get-Location and pwd are two names for it (PowerShell's name and Bash's). That's an alias — a name shortcut, not a different machine.",
+      internals: "Alias table in PowerShell: ls → Get-ChildItem, pwd → Get-Location, cd → Set-Location. When you type ls in PowerShell, Get-ChildItem is what actually runs. <strong>命令名和行为不是永远一一对应。</strong>",
+      breakdown: [
+        { token: "Get-Location", label: "program 程序（PowerShell 原生名）", text: "Verb-Noun style. The exact same behavior Bash users get from pwd." }
+      ]
+    },
+    { type: "terminal",
+      title: "Meet error #3: Permission denied",
+      goal: `Try to enter the system folder: type <code>cd C:\\Windows\\System32</code>. Reading the error IS the exercise.`,
+      background: `Some folders belong to Windows itself. A normal user account isn't allowed in — the OS enforces this with <strong>permissions</strong>. Will the error say "not found" or "denied"?`,
+      hints: [
+        "The path is absolute — type it exactly: C:\\Windows\\System32",
+        "Watch the error TYPE: 找不到 (not found) vs 访问被拒绝 (denied) are different problems.",
+        "Answer: <code>cd C:\\Windows\\System32</code>"
+      ],
+      validate: (r, s) => r.err && /访问被拒绝|Access denied/.test((r.lines[0] || {}).text || ""),
+      success: "You met the third classic error family. Collection complete: not found (path missing) · not recognized (program missing) · access denied (you're not allowed).",
+      internals: "Read errors by TYPE: <strong>Permission denied ≠ path doesn't exist.</strong> This path is perfectly real — YOU are not allowed. The fix would be Administrator rights (Module 06, Windows system tools).",
+      breakdown: [
+        { token: "cd", label: "command 命令", text: "change directory — but this time the OS, not the shell, said no." },
+        { token: "C:\\Windows\\System32", label: "argument 参数", text: "An absolute path. It exists — your account simply lacks permission." }
+      ]
+    },
+    { type: "predict",
+      title: "Final check: is the anatomy pattern a law?",
+      scenario: `True or false: <em>"Every command in every program follows exactly: program + subcommand + option + argument."</em>`,
+      options: [
+        { t: "True — all commands follow this structure", ok: false, why: "pwd has no arguments at all; python hello.py has no subcommand." },
+        { t: "False — it's a common and useful pattern, but each program defines its own grammar", ok: true }
+      ],
+      explain: `False. The pattern is your <strong>reading tool</strong> for unfamiliar commands — most commands you'll meet fit it roughly. But programs define their own grammar: pwd takes nothing, python takes a file. Use the pattern to parse commands, not to assume them.`
+    }
+  ]
 }
+
 ];
 
 /* ================================================================
@@ -1030,7 +1420,84 @@ const REVIEWS = {
         { t: "「因为…」那一部分——原因从句", ok: true, why: "" },
         { t: "窗口标题栏", ok: false, why: "标题栏从不参与解释错误。" } ] }
     ]
-  }
+  },
+  4: {
+    concepts: [
+      "Terminal = 窗口（只管显示和输入），Shell = 住在窗口里解释命令的程序——两者是独立软件",
+      "OS 在底层管硬件和资源；每个 Shell 只是运行在 OS 之上的普通程序",
+      "命令是你输入的一行文字；程序是磁盘上干活的文件；Shell 负责把前者翻译成后者",
+      "同一个终端程序可以承载多个 Shell（PowerShell / CMD / Bash）；同名命令在不同 Shell 里背后的机制可能不同"
+    ],
+    commands: [
+      { cmd: "git --version", en: "—", zh: "让 shell 找到 git.exe 并打印版本" },
+      { cmd: "git", en: "—", zh: "git 的用法提示（程序在等待子命令）" }
+    ],
+    terms: [
+      { en: "terminal", zh: "终端（窗口本身）", ex: "Windows Terminal" },
+      { en: "shell", zh: "命令解释器（程序）", ex: "PowerShell / CMD / Bash" },
+      { en: "command", zh: "命令（你输入的文字）", ex: "git --version" },
+      { en: "program", zh: "程序（干活的文件）", ex: "git.exe" },
+      { en: "operating system (OS)", zh: "操作系统", ex: "Windows / Linux，管硬件" },
+      { en: "executable", zh: "可执行文件", ex: ".exe 文件" }
+    ],
+    mistakes: [
+      "以为 Terminal = Shell——窗口只是舞台，Shell 才是演员",
+      "以为窗口本身懂命令——终端只负责显示和输入",
+      "以为 GitHub 在本地运行 git——git.exe 跑在你自己的电脑上",
+      "以为 ls 在所有 shell 里都是同一个程序——PowerShell 里它是 Get-ChildItem 的别名"
+    ],
+    quiz: [
+      { q: "You type git --version in Windows Terminal. Which part actually INTERPRETS your command?", options: [
+        { t: "The terminal window", ok: false, why: "The window only forwards keystrokes and displays text." },
+        { t: "The shell (e.g. PowerShell) inside the window", ok: true, why: "" },
+        { t: "GitHub's servers", ok: false, why: "Everything happens locally on your machine." },
+        { t: "The OS directly", ok: false, why: "The OS runs programs, but the SHELL is what parses your line and asks the OS." } ] },
+      { q: "Which of these is an OPERATING SYSTEM?", options: [
+        { t: "PowerShell", ok: false, why: "PowerShell is a shell — a program running on an OS." },
+        { t: "Windows 11", ok: true, why: "" },
+        { t: "Bash", ok: false, why: "Bash is a shell." },
+        { t: "Windows Terminal", ok: false, why: "That's a terminal app — a window host." } ] }
+    ]
+  },
+  5: {
+    concepts: [
+      "命令解剖四件套：program（第一个词）→ subcommand → option/flag → argument；引号把带空格的内容粘成一个 argument",
+      "「program + subcommand + option + argument」是常见的阅读模式，不是语法法律——每个程序定义自己的语法",
+      "alias 是行为的别名：pwd / Get-Location 是同一个行为的不同名字",
+      "三类经典错误：not found（路径不存在）、command not found（程序不存在）、access denied（权限不足）"
+    ],
+    commands: [
+      { cmd: "git commit -m \"msg\"", en: "—", zh: "git 的四个角色：程序/子命令/选项/参数" },
+      { cmd: "mkdir <name>", en: "make directory", zh: "创建文件夹（第一个写盘命令）" },
+      { cmd: "Get-Location / pwd", en: "—", zh: "同一个行为的两个名字（alias 示例）" }
+    ],
+    terms: [
+      { en: "subcommand", zh: "子命令", ex: "git commit 里的 commit" },
+      { en: "option / flag", zh: "选项 / 开关", ex: "-m、--message" },
+      { en: "argument", zh: "参数", ex: "\"Finish homework\"" },
+      { en: "alias", zh: "别名", ex: "pwd → Get-Location" },
+      { en: "quoting", zh: "加引号", ex: "\"Finish homework\" 是一个参数" },
+      { en: "permission denied", zh: "权限不足", ex: "路径存在，但你不被允许" }
+    ],
+    mistakes: [
+      "忘加引号：-m Finish homework 变成两个参数，-m 只收一个",
+      "把「四件套」当法律：pwd 没有参数，python hello.py 没有子命令",
+      "混淆 option 和 argument：-m 是开关，引号里的内容才是数据",
+      "见到 access denied 就去检查拼写——那是权限问题，不是路径问题"
+    ],
+    quiz: [
+      { q: "In git commit -m \"Finish homework\", what is \"Finish homework\" (with quotes)?", options: [
+        { t: "Two arguments: Finish and homework", ok: false, why: "Quotes defeat spaces — it's ONE argument." },
+        { t: "One argument — the quotes keep the space inside a single piece of data", ok: true, why: "" },
+        { t: "A subcommand", ok: false, why: "The subcommand is commit." },
+        { t: "The program", ok: false, why: "The program is git." } ] },
+      { q: "cd C:\\Windows\\System32 replies \"Access denied\". What's the most accurate diagnosis?", options: [
+        { t: "The path has a typo — retype it", ok: false, why: "Denied ≠ not found; the path is real." },
+        { t: "The folder exists but your account lacks permission — an Administrator issue, not a spelling issue", ok: true, why: "" },
+        { t: "System32 is a program that isn't installed", ok: false, why: "It's a folder, and it obviously exists — Windows is running from it." },
+        { t: "The internet is down", ok: false, why: "Nothing here touches the network." } ] }
+    ]
+  },
 };
 
 const ROADMAP = [
@@ -1050,7 +1517,7 @@ const ROADMAP = [
    这是「让我逐渐学会自己阅读命令」的核心工具。 */
 function dissectLine(line){
   const row = document.getElementById("dissectRow");
-  const tokens = String(line).trim().split(/\s+/).filter(Boolean);
+  const tokens = String(line).trim().match(/"[^"]*"|\S+/g) || []; // 引号包住的算一个 token
   if(tokens.length === 0){ row.classList.remove("show"); return; }
   const parts = [];
   parts.push({ tok: tokens[0], role: "program 程序", cls: "role-program", tip: "要运行的程序。电脑会去 PATH 等地方找它（Level 6 详解）。" });
@@ -1520,8 +1987,8 @@ function renderCourseEnd(){
   stepContent.innerHTML = `
     <div class="complete-hero">
       <div class="big">🎓</div>
-      <h2>You've completed Levels 0–3!</h2>
-      <p>You've built the first four mental models: what a computer is doing, files &amp; folders, paths, and the terminal with its current directory.<br><br>
+      <h2>All available levels complete! 🎓</h2>
+      <p>You've built mental models from computer basics all the way to command anatomy — Terminal vs Shell vs OS, and how to read any command.<br><br>
       你已经建立了前四个 mental model。这个项目是你的「计算机基础训练场」——左侧 🗺️ Roadmap 里有 Module A～I 的完整规划，会按依赖关系逐批更新。</p>
       <button class="btn" id="backToStart">↺ Review from Level 0</button>
     </div>`;
@@ -1555,7 +2022,9 @@ function levelStepDotsHTML(li){
 function renderSidebar(){
   const list = document.getElementById("levelList");
   let h = "";
+  let lastMod = null;
   LEVELS.forEach((l, i) => {
+    if(l.module && l.module !== lastMod){ lastMod = l.module; h += `<div class="mod-header">${esc(l.module)}</div>`; }
     const pr = levelProgress(i);
     const cur = i === store.level;
     const status = pr.complete ? "completed" : (pr.pct > 0 ? "in progress" : "not started");
@@ -1698,6 +2167,19 @@ document.getElementById("importFile").addEventListener("change", (e) => {
   rd.readAsText(f);
   e.target.value = "";
 });
+
+/* ---------- 中文按需显示（全局开关，独立于进度存储） ---------- */
+(function(){
+  const btn = document.getElementById("zhToggle");
+  if(!btn) return;
+  try{ if(localStorage.getItem("cf-show-zh") === "1"){ document.body.classList.add("show-zh"); btn.textContent = "💡 中文 ✓"; } }catch(e){}
+  btn.addEventListener("click", () => {
+    document.body.classList.toggle("show-zh");
+    const on = document.body.classList.contains("show-zh");
+    btn.textContent = on ? "💡 中文 ✓" : "💡 中文";
+    try{ localStorage.setItem("cf-show-zh", on ? "1" : "0"); }catch(e){}
+  });
+})();
 
 /* ---------- 启动 ---------- */
 resetTerminal(true);
