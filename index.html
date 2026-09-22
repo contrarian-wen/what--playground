@@ -112,6 +112,43 @@ h2.step-title{font-size:24px;margin-bottom:20px;line-height:1.35}
 .answer-box.show{display:block}
 .answer-box code{font-family:var(--mono);color:var(--purple)}
 
+/* v1.3：Level 8 新题型（multiselect / matching / ordering / fill / clickmap） */
+.ms-list{display:flex;flex-direction:column;gap:8px}
+.ms-opt{display:flex;gap:12px;align-items:flex-start;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:11px 14px;font-size:14px;line-height:1.6;cursor:pointer;font-family:inherit;color:var(--text);text-align:left;width:100%}
+.ms-opt:hover:not(:disabled){border-color:var(--accent)}
+.ms-opt input{accent-color:var(--accent);margin-top:3px;flex-shrink:0}
+.ms-opt.picked{border-color:var(--accent)}
+.ms-opt.eliminated{opacity:.45;border-color:var(--red)}
+.ms-opt:disabled{cursor:default}
+.match-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;align-items:center}
+.match-left{font-size:14px;line-height:1.5;padding:9px 12px;background:var(--panel2);border:1px solid var(--border);border-radius:10px}
+select.match-sel{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:9px 12px;font-size:13px;font-family:inherit;width:100%}
+select.match-sel.bad{border-color:var(--red)}
+select.match-sel.good{border-color:var(--green)}
+.order-pool,.order-ans{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.order-chip{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:99px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+.order-chip:hover{border-color:var(--accent);color:var(--accent)}
+.order-chip.used{opacity:.3;pointer-events:none}
+.order-chip.seq{border-color:var(--accent);color:#a5d6ff}
+.order-chip.seq .seq-n{color:var(--dim);margin-right:6px;font-size:11px}
+.order-lane{border:1px dashed var(--border);border-radius:12px;padding:8px 12px;min-height:50px}
+.order-lane-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.fill-line{font-family:var(--mono);font-size:15px;background:#010409;border:1px solid var(--border);border-radius:12px;padding:16px 18px;line-height:2.2;margin:10px 0;color:#e6edf3}
+.fill-input{background:var(--panel2);border:1px solid var(--accent);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:14px;padding:4px 12px;min-width:140px;text-align:center;outline:none}
+.fill-input:focus{border-color:var(--green)}
+.fill-input.bad{border-color:var(--red);animation:shake .3s}
+.clickmap-wrap{position:relative;background:#010409;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:14px}
+.clickmap-wrap svg{display:block;width:100%;height:auto}
+.cm-zone{position:absolute;border:1.5px dashed transparent;border-radius:8px;cursor:pointer;background:rgba(88,166,255,0)}
+.cm-zone:hover{border-color:var(--accent);background:rgba(88,166,255,.10)}
+.cm-zone.visited{border-color:var(--green);background:rgba(63,185,80,.08)}
+.cm-zone.active{border-color:var(--yellow);background:rgba(210,153,34,.12)}
+.cm-info{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.8;min-height:64px}
+.cm-info h4{color:var(--accent);font-size:14px;margin-bottom:6px}
+.cm-info .cm-tag{display:inline-block;font-size:10px;letter-spacing:.08em;border:1px solid var(--yellow);color:var(--yellow);border-radius:99px;padding:1px 8px;margin-left:8px;vertical-align:2px}
+.cm-progress{font-size:12px;color:var(--dim);margin-top:8px}
+@media(max-width:700px){.match-grid{grid-template-columns:1fr}}
+
 /* 命令拆解 */
 .breakdown{display:grid;gap:10px;margin:12px 0}
 .bd-part{display:flex;gap:12px;align-items:flex-start;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 14px}
@@ -637,9 +674,55 @@ function executeCommand(state, line){
     return result;
   }
 
+  // ===== GUI 启动模拟：terminal 也能打开 GUI 程序/文件 =====
+  // 教学点：你在 terminal 输入命令 → shell 找到程序 → 启动它 → 它打开一个 GUI 窗口
+  if(cmd === "notepad" || cmd === "code" || cmd === "start" || cmd === "explorer"){
+    let target = result.args[0] || ".";
+    // -r/--reuse-window 等 VS Code 选项：跳过，取最后一个参数
+    if(cmd === "code" && result.args.length > 0){
+      const nonFlag = result.args.filter(a => a.charAt(0) !== "-");
+      target = nonFlag.length ? nonFlag[nonFlag.length - 1] : ".";
+    }
+    const r = resolvePath(state, target);
+    const node = r ? getNode(state.fs, r) : undefined;
+    if(!r || node === undefined){
+      result.err = true;
+      result.lines.push({ text: `${cmd}: 找不到路径“${target}”，因为该路径不存在。`, cls: "t-err" });
+      return result;
+    }
+    result.resolved = r.slice();
+    const full = pathStr(r);
+    if(cmd === "notepad"){
+      if(node !== null){
+        result.err = true;
+        result.lines.push({ text: `notepad: “${full}” 是一个文件夹。记事本只能打开文件。`, cls: "t-err" });
+        result.lines.push({ text: "（想打开文件夹请用 explorer . ）", cls: "t-dim" });
+        return result;
+      }
+      result.lines.push({ text: "【模拟 GUI】一个记事本窗口弹出，正在编辑 " + full, cls: "t-green" });
+      result.lines.push({ text: "(shell 找到 notepad.exe → OS 启动它 → 它打开了这个文件。命令行 ≠ 只能用文字)", cls: "t-dim" });
+      return result;
+    }
+    if(cmd === "code"){
+      result.lines.push({ text: "【模拟 GUI】VS Code 窗口启动，打开了 " + full + (node !== null ? "\\" : ""), cls: "t-green" });
+      result.lines.push({ text: "(真实场景：code . 是开发者每天用的命令——在 VS Code 里打开当前文件夹)", cls: "t-dim" });
+      return result;
+    }
+    // start / explorer → File Explorer
+    if(node === null){
+      result.err = true;
+      result.lines.push({ text: `explorer: “${full}” 是一个文件，不是文件夹。`, cls: "t-err" });
+      result.lines.push({ text: "（想打开文件请用 notepad 或 start 文件名）", cls: "t-dim" });
+      return result;
+    }
+    result.lines.push({ text: "【模拟 GUI】一个文件资源管理器窗口弹出，停在 " + full + "\\", cls: "t-green" });
+    result.lines.push({ text: "(你在 GUI 里双击文件夹做的事，terminal 里一行命令也能做——操作的是同一棵树)", cls: "t-dim" });
+    return result;
+  }
+
   if(cmd === "help"){
     result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
-    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
     return result;
   }
 
@@ -1715,6 +1798,576 @@ const LEVELS = [
   ]
 }
 
+,
+{
+  id: 8,
+  module: "02 · Command Line ⭐",
+  title: "Understanding the Terminal Ecosystem",
+  en: "The Terminal Ecosystem",
+  summary: "建立 Terminal Mental Model：看到任何窗口能回答五层问题——容器（Window/Tab/Pane）是谁、Shell 是谁、cwd 在哪、权限多大、谁在执行。辨析 GUI/CLI、Terminal/Shell/Console、Windows Terminal/PowerShell/CMD、Git/Bash/Git Bash/GitHub、VS Code Integrated Terminal、Standard/Administrator。",
+  steps: [
+    { type: "concept",
+      title: "GUI vs CLI：同一台电脑，两种 interface",
+      body: `
+        <p>你 confusion 的来源，我们先一刀切下去。你每天用的这些东西——<strong>文件资源管理器 (File Explorer)、设置 (Settings)、浏览器、VS Code 的编辑器</strong>——都属于 <span class="term-inline">GUI</span>（Graphical User Interface，图形界面）：用鼠标点点点，靠图标和菜单交流。</p>
+        <p>而 <span class="term-inline">CLI</span>（Command Line Interface，命令行界面）是另一种交流方式：一个窗口、一个提示符，你<strong>打字</strong>，它回<strong>文字</strong>。</p>
+        <p>最关键的认知是：<strong>两者操作的是同一台电脑、同一棵文件树。</strong>在 File Explorer 里双击 Documents，和在 terminal 里输入 <span class="term-inline">cd Documents</span>，到达的是<strong>同一个地方</strong>。GUI 和 CLI 不是两种电脑，是同一台电脑的两种 interface。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="700" height="260" viewBox="0 0 700 260">
+          <defs><marker id="a8a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#3fb950"/></marker></defs>
+          <rect x="20" y="16" width="300" height="180" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <rect x="20" y="16" width="300" height="28" rx="12" fill="#1c2330"/>
+          <circle cx="38" cy="30" r="5" fill="#f85149"/><circle cx="54" cy="30" r="5" fill="#d29922"/><circle cx="70" cy="30" r="5" fill="#3fb950"/>
+          <text x="170" y="35" fill="#9aa7b4" font-size="11" text-anchor="middle">File Explorer — GUI</text>
+          <rect x="36" y="56" width="268" height="128" rx="8" fill="#0d1117" stroke="#2d333f"/>
+          <text x="48" y="80" fill="#e6edf3" font-size="12">📁 Desktop</text>
+          <text x="48" y="102" fill="#58a6ff" font-size="12">📁 <tspan font-weight="bold">Documents</tspan></text>
+          <text x="48" y="124" fill="#e6edf3" font-size="12">📁 Downloads</text>
+          <text x="48" y="146" fill="#e6edf3" font-size="12">📁 Pictures</text>
+          <text x="48" y="172" fill="#9aa7b4" font-size="10">鼠标双击 = 进入文件夹</text>
+          <rect x="380" y="16" width="300" height="180" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <rect x="380" y="16" width="300" height="28" rx="12" fill="#1c2330"/>
+          <circle cx="398" cy="30" r="5" fill="#f85149"/><circle cx="414" cy="30" r="5" fill="#d29922"/><circle cx="430" cy="30" r="5" fill="#3fb950"/>
+          <text x="530" y="35" fill="#9aa7b4" font-size="11" text-anchor="middle">Terminal — CLI</text>
+          <rect x="396" y="56" width="268" height="128" rx="8" fill="#010409" stroke="#2d333f"/>
+          <text x="408" y="82" fill="#3fb950" font-size="12" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt;</text>
+          <text x="408" y="104" fill="#a5d6ff" font-size="12" font-family="Consolas,monospace">cd Documents</text>
+          <text x="408" y="126" fill="#3fb950" font-size="12" font-family="Consolas,monospace">PS ...\\Documents&gt;</text>
+          <text x="408" y="172" fill="#9aa7b4" font-size="10">键盘打字 = 进入同一个文件夹</text>
+          <path d="M320,106 L380,106" stroke="#3fb950" stroke-width="2" marker-end="url(#a8a)"/>
+          <text x="350" y="222" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">同一棵树，同一个 Documents</text>
+        </svg>
+        <div class="cap">GUI 用鼠标表达「进去」，CLI 用 cd 表达「进去」——到达的是文件树里同一个节点。</div>
+        </div>`,
+      key: "<strong>GUI 和 CLI 是 interface 之争，不是两台电脑之争。</strong>先建立这条，后面所有辨析都有了地基。"
+    },
+    { type: "multiselect",
+      title: "Spot the CLI：哪些是命令行界面？",
+      scenario: `下面 6 个东西，哪些是你通过<span class="term-inline">输入文字命令</span>与之交互的 CLI？（可能有多于一个答案，选出所有）`,
+      options: [
+        { t: "文件资源管理器 (File Explorer) 窗口", ok: false, why: "鼠标双击、拖图标——纯 GUI。" },
+        { t: "PowerShell 窗口", ok: true },
+        { t: "Git Bash 窗口", ok: true },
+        { t: "Windows 设置 (Settings) 应用", ok: false, why: "点点点的设置界面，GUI。" },
+        { t: "CMD（命令提示符）窗口", ok: true },
+        { t: "VS Code 的代码编辑区", ok: false, why: "敲代码的文本区是 GUI 的一部分；VS Code 整体是 GUI 应用。（它底部还藏着一个终端——下一步见。）" }
+      ],
+      explain: `三个窗口——PowerShell、Git Bash、CMD——都是 CLI：共同特征是有<strong>提示符</strong>（<span class="term-inline">&gt;</span> 或 <span class="term-inline">$</span>）、你打字、它回文字。其余三个是 GUI。注意最后一个是陷阱：VS Code 大部分是 GUI，但它的 integrated terminal 是 CLI——马上你就会解剖它。`,
+      hints: [
+        "逐个想：和它交流主要靠键盘打字，还是鼠标点击？",
+        "有提示符（> 或 $）等着你输入的，才是 CLI。",
+        "Answer: PowerShell 窗口、Git Bash 窗口、CMD 窗口"
+      ],
+      key: "CLI 的身份证是<strong>提示符</strong>：看到 <code>&gt;</code> 或 <code>$</code> 在等你打字，就是命令行界面。"
+    },
+    { type: "concept",
+      title: "骨架：You → Terminal → Shell → OS",
+      body: `
+        <p>这是 Level 8 全部内容的骨架，Level 4 你已经见过它，现在把它钉死：</p>
+        <ul>
+          <li><strong>Terminal（终端应用）</strong>：窗口本身。管显示、管键盘输入——<strong>不理解任何命令</strong>。</li>
+          <li><strong>Shell（命令解释器）</strong>：住在窗口里的程序。读入你的一行文字、拆词、找程序、把输出交回窗口。PowerShell、CMD、Bash 都是 shell。</li>
+          <li><strong>OS（操作系统）</strong>：真正管硬件、创建进程的大管家。Shell 也只是运行在 OS 上的一个普通程序。</li>
+        </ul>
+        <p>顺带一个常见疑问：<span class="term-inline">Console</span> 这个词呢？日常使用中 console ≈ terminal（历史上 console 指专用物理终端机，现在已基本混用）。看到不用慌，按 terminal 理解即可。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="560" height="300" viewBox="0 0 560 300">
+          <defs><marker id="a8b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#58a6ff"/></marker></defs>
+          <rect x="180" y="8" width="200" height="40" rx="10" fill="#161b22" stroke="#bc8cff"/>
+          <text x="280" y="33" fill="#bc8cff" font-size="13" text-anchor="middle" font-weight="bold">你（键盘 + 眼睛）</text>
+          <line x1="280" y1="48" x2="280" y2="72" stroke="#58a6ff" stroke-width="2" marker-end="url(#a8b)"/>
+          <rect x="180" y="74" width="200" height="44" rx="10" fill="#161b22" stroke="#58a6ff"/>
+          <text x="280" y="93" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">Terminal 应用</text>
+          <text x="280" y="109" fill="#9aa7b4" font-size="10" text-anchor="middle">窗口 / 标签 / 面板 · 只管显示和输入</text>
+          <line x1="280" y1="118" x2="280" y2="142" stroke="#58a6ff" stroke-width="2" marker-end="url(#a8b)"/>
+          <rect x="180" y="144" width="200" height="44" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="280" y="163" fill="#d29922" font-size="13" text-anchor="middle" font-weight="bold">Shell</text>
+          <text x="280" y="179" fill="#9aa7b4" font-size="10" text-anchor="middle">解析命令 · 找程序 · PowerShell / CMD / Bash</text>
+          <line x1="280" y1="188" x2="280" y2="212" stroke="#58a6ff" stroke-width="2" marker-end="url(#a8b)"/>
+          <rect x="180" y="214" width="200" height="44" rx="10" fill="#161b22" stroke="#3fb950"/>
+          <text x="280" y="233" fill="#3fb950" font-size="13" text-anchor="middle" font-weight="bold">Operating System</text>
+          <text x="280" y="249" fill="#9aa7b4" font-size="10" text-anchor="middle">创建进程 · 管硬件 · 管权限</text>
+          <text x="400" y="98" fill="#9aa7b4" font-size="11">Windows Terminal</text>
+          <text x="400" y="112" fill="#9aa7b4" font-size="11">VS Code（底部的终端面板）</text>
+          <text x="400" y="167" fill="#9aa7b4" font-size="11">PowerShell / CMD / Bash</text>
+          <text x="400" y="240" fill="#9aa7b4" font-size="11">Windows / Linux</text>
+        </svg>
+        <div class="cap">四层各管各的：你打字 → 窗口转交 → Shell 翻译 → OS 执行。后面所有混淆，都是把这四层里的某两层当成了同一层。</div>
+        </div>`,
+      key: "<strong>Terminal ≠ Shell ≠ OS。</strong>窗口是容器，Shell 是翻译官，OS 是大管家。"
+    },
+    { type: "clickmap",
+      title: "解剖：一个 Windows Terminal 窗口",
+      intro: `<p>这是一个 <strong>Windows Terminal</strong> 窗口的示意图。别急着读——<strong>逐块点击</strong>图中的感应区，看看窗口的每个部分各自属于哪一层、负不负责「懂命令」。</p>`,
+      svg: `
+        <svg width="660" height="340" viewBox="0 0 660 340">
+          <rect x="8" y="8" width="644" height="324" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <rect x="8" y="8" width="644" height="30" rx="12" fill="#1c2330"/>
+          <circle cx="26" cy="23" r="5" fill="#f85149"/><circle cx="42" cy="23" r="5" fill="#d29922"/><circle cx="58" cy="23" r="5" fill="#3fb950"/>
+          <text x="330" y="27" fill="#9aa7b4" font-size="11" text-anchor="middle">Windows Terminal</text>
+          <rect x="16" y="38" width="628" height="34" fill="#0d1117" stroke="#2d333f"/>
+          <rect x="20" y="42" width="180" height="26" rx="7" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+          <text x="34" y="59" fill="#58a6ff" font-size="11" font-family="Consolas,monospace">⬛ PowerShell</text>
+          <rect x="208" y="42" width="180" height="26" rx="7" fill="#161b22" stroke="#2d333f"/>
+          <text x="222" y="59" fill="#9aa7b4" font-size="11" font-family="Consolas,monospace">Ubuntu (WSL)</text>
+          <rect x="396" y="42" width="180" height="26" rx="7" fill="#161b22" stroke="#2d333f"/>
+          <text x="410" y="59" fill="#9aa7b4" font-size="11" font-family="Consolas,monospace">Command Prompt</text>
+          <text x="630" y="59" fill="#9aa7b4" font-size="13" text-anchor="end">＋</text>
+          <rect x="16" y="72" width="612" height="238" fill="#010409" stroke="#2d333f"/>
+          <text x="28" y="96" fill="#3fb950" font-size="12" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt;</text>
+          <text x="28" y="118" fill="#a5d6ff" font-size="12" font-family="Consolas,monospace">ls</text>
+          <text x="28" y="140" fill="#e6edf3" font-size="12" font-family="Consolas,monospace">Desktop\\</text>
+          <text x="28" y="162" fill="#e6edf3" font-size="12" font-family="Consolas,monospace">Documents\\</text>
+          <text x="28" y="184" fill="#e6edf3" font-size="12" font-family="Consolas,monospace">Downloads\\</text>
+          <text x="28" y="228" fill="#3fb950" font-size="12" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt; <tspan fill="#9aa7b4">▌</tspan></text>
+          <rect x="632" y="72" width="12" height="238" fill="#1c2330" stroke="#2d333f"/>
+          <rect x="634" y="90" width="8" height="70" rx="4" fill="#30363d"/>
+        </svg>`,
+      zones: [
+        { x: 1.2, y: 2.4, w: 97.6, h: 8.8 },
+        { x: 2.4, y: 11.2, w: 95.2, h: 10.0 },
+        { x: 2.4, y: 21.2, w: 92.7, h: 70.0 },
+        { x: 95.5, y: 21.2, w: 3.0, h: 70.0 }
+      ],
+      infos: [
+        { h: "Title bar · 窗口标题栏", tag: "GUI of the app", p: "它只是 <strong>Windows Terminal 这个 app</strong>的界面装饰——和浏览器的标题栏同理。上面写着什么，<strong>不代表</strong>里面住着哪个 shell。窗口 title 写的是 app 的名字，不是 shell 的名字。" },
+        { h: "Tabs · 标签页", tag: "UI container", p: "一个窗口可以开多个 tab，<strong>每个 tab 通常住着一个 shell 会话</strong>：这里分别是 PowerShell、Ubuntu (WSL)、Command Prompt。Tab 是<strong>容器</strong>——换掉 tab 里的 shell，app 还是 Windows Terminal。" },
+        { h: "Pane · 命令区域（你打字的地方）", tag: "typing surface", p: "你把字打在这里，输出也显示在这里。但 pane 本身<strong>不理解任何命令</strong>——它只负责把键盘交给 shell、把 shell 的输出画出来。真正「懂」你输入的是住在本 tab 里的那个 shell。" },
+        { h: "Scroll bar · 滚动条", tag: "pure GUI", p: "纯 GUI 元素。它的存在只说明一件事：输出太多，一屏放不下。和命令是否执行成功、被谁执行，<strong>没有任何关系</strong>。" }
+      ],
+      key: "窗口里几乎所有元素（标题栏 / 标签 / 滚动条）都是 <strong>GUI</strong>；唯一「懂命令」的，是住在 tab 里面的那个 <strong>Shell</strong>。"
+    },
+    { type: "predict",
+      title: "Predict：选了 Ubuntu，Windows Terminal 变成 Linux 了吗？",
+      scenario: `你打开 Windows Terminal，点「＋」旁边的下拉箭头，选择 <span class="term-inline">Ubuntu (WSL)</span>。新 tab 的提示符变成了 <span class="term-inline">yoga@DESKTOP:~$</span>。<strong>Windows Terminal 现在变成 Linux 了吗？</strong>`,
+      options: [
+        { t: "是——窗口已经是 Linux 程序了", ok: false, why: "Windows Terminal 始终是 Windows 应用；变的只是它肚子里住的东西。" },
+        { t: "否——Windows Terminal 还是同一个 app，只是新 tab 里住进来的 shell 换成了 Ubuntu 的 Bash", ok: true },
+        { t: "半个 Linux——界面是 Windows，内核在 tab 里面", ok: false, why: "内核 (WSL) 确实是 Linux，但它是独立的运行环境；Windows Terminal 这个 app 本身和 Linux 无关。" },
+        { t: "取决于网络", ok: false, why: "完全本地的事，和网络无关。" }
+      ],
+      explain: `答案 B。Windows Terminal 是<strong>容器</strong>：同一个 app 里，这个 tab 住 PowerShell、那个 tab 住 CMD、第三个 tab 住 Ubuntu。换 tab 里的 shell ≠ 换 app，更 ≠ 「Windows 变成了 Linux」——WSL 是旁边独立运行的一个 Linux 环境，只是被「请进」了终端的一个 tab。`,
+      hints: [
+        "先分清：变的是 app，还是 tab 里的住客？",
+        "标题栏写的是谁的名字？（还是 Windows Terminal）",
+        "Answer: 否——容器没变，住进来的 shell 换了"
+      ]
+    },
+    { type: "concept",
+      title: "Windows Terminal vs PowerShell vs CMD：三个名字一台戏",
+      body: `
+        <p>这三个名字总在同一屏出现，各自的角色：</p>
+        <ul>
+          <li><strong>Windows Terminal</strong>：终端<strong>应用</strong>（窗口容器）。可从微软商店安装。本身不懂命令。</li>
+          <li><strong>PowerShell</strong>：现代 <strong>shell</strong>。命令是 <span class="term-inline">Verb-Noun</span> 风格（Get-Location、Set-Location），深蓝色提示符 <span class="term-inline">PS C:\\&gt;</span>。</li>
+          <li><strong>CMD</strong>：老牌 <strong>shell</strong>（cmd.exe，DOS 时代的遗产）。提示符没有 PS 前缀：<span class="term-inline">C:\\&gt;</span>。功能少但 ubiquitous——每台 Windows 都有。</li>
+        </ul>
+        <p>它们的关系：<strong>你可以在 Windows Terminal 里同时开 PowerShell tab 和 CMD tab</strong>——app 一个，shell 两个。别人说「打开 PowerShell」，可能是「新开一个 Windows Terminal 窗口跑 PowerShell」，也可能是「在现有窗口加一个 PowerShell tab」——两者等价。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="230" viewBox="0 0 660 230">
+          <rect x="40" y="14" width="380" height="200" rx="12" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+          <text x="230" y="38" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">Windows Terminal（一个 app）</text>
+          <rect x="60" y="54" width="160" height="140" rx="10" fill="#0d1117" stroke="#d29922"/>
+          <text x="140" y="76" fill="#d29922" font-size="12" text-anchor="middle" font-weight="bold">Tab 1 · PowerShell</text>
+          <text x="72" y="100" fill="#3fb950" font-size="11" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt;</text>
+          <text x="72" y="140" fill="#9aa7b4" font-size="10">现代 shell · Verb-Noun</text>
+          <rect x="240" y="54" width="160" height="140" rx="10" fill="#0d1117" stroke="#9aa7b4"/>
+          <text x="320" y="76" fill="#9aa7b4" font-size="12" text-anchor="middle" font-weight="bold">Tab 2 · CMD</text>
+          <text x="252" y="100" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">C:\\Users\\YOGA&gt;</text>
+          <text x="252" y="140" fill="#9aa7b4" font-size="10">老牌 shell · DOS 遗产</text>
+          <rect x="450" y="54" width="180" height="140" rx="10" fill="#0d1117" stroke="#2d333f" stroke-dasharray="5 4"/>
+          <text x="540" y="76" fill="#9aa7b4" font-size="12" text-anchor="middle" font-weight="bold">（也可以不用 WT）</text>
+          <text x="462" y="100" fill="#e6edf3" font-size="10">老式 conhost 窗口</text>
+          <text x="462" y="118" fill="#e6edf3" font-size="10">也能直接跑 PowerShell</text>
+          <text x="462" y="136" fill="#e6edf3" font-size="10">或 CMD——窗口更朴素</text>
+          <text x="462" y="168" fill="#9aa7b4" font-size="10">Win+R → powershell 就是它</text>
+        </svg>
+        <div class="cap">一个 app，多个 shell tab。提示符里有没有 <tspan font-family="Consolas,monospace">PS</tspan> 前缀，是肉眼区分 PowerShell 和 CMD 的最快方法。</div>
+        </div>`,
+      key: "<strong>Windows Terminal 是装 shell 的盒子；PowerShell 和 CMD 是两种不同的 shell。</strong>盒子可以换，shell 可以换，两者别绑定。"
+    },
+    { type: "predict",
+      title: "Which one am I using? Git Bash 窗口里的到底是谁？",
+      scenario: `你双击桌面上的 <span class="term-inline">Git Bash</span> 图标，打开一个窗口，标题栏写着 <span class="term-inline">MINGW64</span>，提示符是 <span class="term-inline">YOGA@DESKTOP MINGW64 ~ $</span>。<strong>你现在「正在使用」的到底是什么？</strong>`,
+      options: [
+        { t: "Git——版本控制工具本身", ok: false, why: "git.exe 只是住在这个环境 PATH 里的一个程序，你现在并没有在运行它。" },
+        { t: "Bash——一个 shell，只不过移植到了 Windows 上", ok: true },
+        { t: "GitHub——代码托管网站", ok: false, why: "GitHub 在远端服务器上，此刻和你的窗口没有任何关系。" },
+        { t: "一个能联网下载代码的特殊终端", ok: false, why: "它只是本地 shell；联网是 git 命令的事，不是窗口的事。" }
+      ],
+      explain: `答案 B。Git Bash 本质上是 <strong>Windows 上的 Bash 环境</strong>（MSYS2 / MINGW64）。它叫「Git」Bash 只是因为 Git for Windows 把它作为载体附带——git 的一些脚本需要在 bash 环境里跑。所以：<strong>Git Bash ≠ Git</strong>（git 只是它里面的一个程序），<strong>Git Bash ≠ GitHub</strong>（那是网站），<strong>Git Bash ≈ Bash</strong>（核心就是个 shell）。`,
+      hints: [
+        "提示符 $ 是哪种 shell 家族的口音？（Bash 家族）",
+        "MINGW64 是 Bash 移植到 Windows 的环境名",
+        "Answer: Bash——一个跑在 Windows 上的 shell"
+      ]
+    },
+    { type: "matching",
+      title: "Matching：Git / Bash / Git Bash / GitHub 各归各位",
+      scenario: `四个名字，四种本质。把每个名词连到它的正确定义上：`,
+      pairs: [
+        { l: "Git", r: "版本控制程序（跑在你电脑上的工具）" },
+        { l: "Bash", r: "Shell（命令解释器）" },
+        { l: "Git Bash", r: "Windows 上的 Bash 环境（随 Git for Windows 附带）" },
+        { l: "GitHub", r: "托管 git 仓库的网站（remote hosting platform）" }
+      ],
+      choices: [
+        "版本控制程序（跑在你电脑上的工具）",
+        "Shell（命令解释器）",
+        "Windows 上的 Bash 环境（随 Git for Windows 附带）",
+        "托管 git 仓库的网站（remote hosting platform）",
+        "Windows 的终端应用（窗口容器）"
+      ],
+      explain: `一句话钉死四个词：<strong>Git 是工具，Bash 是 shell，Git Bash 是「装着 Bash 的 Windows 环境」，GitHub 是网站。</strong>四个词里只有 Git Bash 和 Git 有捆绑关系（附带安装），其余各自独立。`,
+      hints: [
+        "先问自己：它是程序？是语言解释器？是环境？还是网站？",
+        "只有一个和「网络/远程」有关",
+        "Answer: Git=版本控制程序，Bash=Shell，Git Bash=Windows 上的 Bash 环境，GitHub=网站"
+      ],
+      key: "看到 Git Bash 就默念：<strong>这是个 Bash，只是 Git for Windows 顺带给我的。</strong>"
+    },
+    { type: "clickmap",
+      title: "解剖：VS Code —— GUI 应用 + 体内藏着一个 terminal",
+      intro: `<p><strong>VS Code 是一个 GUI 应用</strong>（编辑器），这一点和记事本同类。但开发者的很多时间「住在」它里面——因为它体内嵌着一个完整终端。点击四个区域，判断每个区域是什么类型的 interface。</p>`,
+      svg: `
+        <svg width="660" height="360" viewBox="0 0 660 360">
+          <rect x="8" y="8" width="644" height="344" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <rect x="8" y="8" width="644" height="30" rx="12" fill="#1c2330"/>
+          <circle cx="26" cy="23" r="5" fill="#f85149"/><circle cx="42" cy="23" r="5" fill="#d29922"/><circle cx="58" cy="23" r="5" fill="#3fb950"/>
+          <text x="330" y="27" fill="#9aa7b4" font-size="11" text-anchor="middle">Visual Studio Code — GUI application</text>
+          <rect x="14" y="42" width="30" height="268" fill="#0d1117" stroke="#2d333f"/>
+          <text x="29" y="66" fill="#9aa7b4" font-size="12" text-anchor="middle">📄</text>
+          <text x="29" y="94" fill="#58a6ff" font-size="12" text-anchor="middle">🗂</text>
+          <text x="29" y="122" fill="#9aa7b4" font-size="12" text-anchor="middle">🔍</text>
+          <text x="29" y="150" fill="#9aa7b4" font-size="12" text-anchor="middle">⑂</text>
+          <rect x="44" y="42" width="150" height="268" fill="#0d1117" stroke="#2d333f"/>
+          <text x="56" y="62" fill="#9aa7b4" font-size="10">EXPLORER</text>
+          <text x="56" y="84" fill="#e6edf3" font-size="11">▾ PLAYGROUND</text>
+          <text x="66" y="104" fill="#e6edf3" font-size="11">index.html</text>
+          <text x="66" y="124" fill="#e6edf3" font-size="11">README.md</text>
+          <text x="66" y="144" fill="#e6edf3" font-size="11">.gitignore</text>
+          <rect x="194" y="42" width="452" height="200" fill="#0d1117" stroke="#2d333f"/>
+          <rect x="194" y="42" width="452" height="24" fill="#161b22"/>
+          <text x="204" y="58" fill="#a5d6ff" font-size="10" font-family="Consolas,monospace">index.html ✕</text>
+          <text x="204" y="90" fill="#bc8cff" font-size="11" font-family="Consolas,monospace">const LEVELS = [</text>
+          <text x="214" y="108" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">{ id: 8, title: "The Terminal</text>
+          <text x="214" y="126" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">&nbsp;&nbsp;Ecosystem" }, ... ]</text>
+          <rect x="194" y="242" width="452" height="94" fill="#010409" stroke="#58a6ff" stroke-width="1.5"/>
+          <rect x="194" y="242" width="452" height="22" fill="#161b22"/>
+          <text x="204" y="257" fill="#58a6ff" font-size="10" font-family="Consolas,monospace">TERMINAL ✕</text>
+          <text x="280" y="257" fill="#9aa7b4" font-size="10">PROBLEMS</text>
+          <text x="360" y="257" fill="#9aa7b4" font-size="10">OUTPUT</text>
+          <text x="204" y="280" fill="#3fb950" font-size="11" font-family="Consolas,monospace">PS C:\\Users\\YOGA\\playground&gt; <tspan fill="#9aa7b4">▌</tspan></text>
+          <rect x="8" y="314" width="644" height="30" fill="#1c2330"/>
+          <text x="20" y="333" fill="#9aa7b4" font-size="10" font-family="Consolas,monospace">🌿 main*  ⎇  C:\\Users\\YOGA\\playground  ⇄ 0↓0↑  📣</text>
+        </svg>`,
+      zones: [
+        { x: 0.6, y: 11.7, w: 28.8, h: 74.4 },
+        { x: 29.4, y: 11.7, w: 68.5, h: 55.6 },
+        { x: 29.4, y: 67.2, w: 68.5, h: 26.1 },
+        { x: 1.2, y: 87.2, w: 97.6, h: 8.3 }
+      ],
+      infos: [
+        { h: "Explorer · 侧边栏", tag: "GUI panel", p: "文件资源管理器面板——文件树的<strong>图形视图</strong>。它显示的和你终端里 ls 看到的，是同一棵树。纯 GUI，不执行命令。" },
+        { h: "Editor · 编辑区", tag: "GUI panel", p: "VS Code 的本职：文本编辑器。你在这里写代码。它也是 GUI——和记事本同类，只是更强大。" },
+        { h: "Integrated Terminal · 内置终端", tag: "CLI inside GUI", p: "关键角色！这是一个<strong>嵌在 VS Code 里的完整终端</strong>：可以开 PowerShell、CMD、Git Bash、WSL 的 tab。它和单独打开的 Windows Terminal 是<strong>同类东西</strong>（容器）。「在 VS Code 里打开 Terminal」≠「VS Code 是 Terminal」——就像车里有个收音机，不等于车是收音机。" },
+        { h: "Status Bar · 状态栏", tag: "GUI info display", p: "底部那条显示分支名 (main)、cwd、错误数。<strong>显示</strong>信息而已——它告诉你终端在哪，自己不执行任何东西。" }
+      ],
+      key: "VS Code = GUI 应用（编辑器）＋ 肚子里一个 terminal（容器）。<strong>容器里的 shell 才是解析命令的那位。</strong>"
+    },
+    { type: "concept",
+      title: "Window / Tab / Pane / Shell / Process：容器 ≠ 住客",
+      body: `
+        <p>这一组词最容易缠在一起。先分家：</p>
+        <ul>
+          <li><strong>Window / Tab / Pane</strong>：<span class="term-inline">容器</span>（UI 概念）。Window 装 tabs，tab 可以 split 成多个 panes。它们只是「格子」，本身不运行任何东西。</li>
+          <li><strong>Shell / Process</strong>：<span class="term-inline">住客</span>（运行概念）。每个 pane 住着一个 shell 进程——自己的 cwd、自己的环境变量副本（Level 7 的便签！）。</li>
+        </ul>
+        <p>经验法则：<strong>每多开一个 tab（或 split 一个 pane），通常就多一个 shell 进程</strong>，它们互不相干——你在 tab 1 里 cd 到 Documents，tab 2 还待在原地。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="250" viewBox="0 0 620 250">
+          <rect x="40" y="10" width="540" height="225" rx="12" fill="#161b22" stroke="#58a6ff"/>
+          <text x="310" y="32" fill="#58a6ff" font-size="12" text-anchor="middle" font-weight="bold">Window · Windows Terminal</text>
+          <rect x="60" y="44" width="150" height="26" rx="7" fill="#0d1117" stroke="#d29922" stroke-width="1.5"/>
+          <text x="74" y="61" fill="#d29922" font-size="11" font-family="Consolas,monospace">Tab 1 · PowerShell</text>
+          <rect x="220" y="44" width="150" height="26" rx="7" fill="#0d1117" stroke="#2d333f"/>
+          <text x="234" y="61" fill="#9aa7b4" font-size="11" font-family="Consolas,monospace">Tab 2 · Ubuntu</text>
+          <rect x="380" y="44" width="150" height="26" rx="7" fill="#0d1117" stroke="#2d333f"/>
+          <text x="394" y="61" fill="#9aa7b4" font-size="11" font-family="Consolas,monospace">Tab 3 · CMD</text>
+          <rect x="70" y="86" width="230" height="120" rx="8" fill="#010409" stroke="#2d333f"/>
+          <text x="82" y="108" fill="#3fb950" font-size="11" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt;</text>
+          <rect x="320" y="86" width="230" height="120" rx="8" fill="#010409" stroke="#2d333f"/>
+          <text x="332" y="108" fill="#3fb950" font-size="11" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt; <tspan fill="#9aa7b4">(另一个!)</tspan></text>
+          <text x="185" y="230" fill="#d29922" font-size="11" text-anchor="middle">Tab 1 被 split 成两个 pane = 两个独立 shell 进程</text>
+        </svg>
+        <div class="cap">Window ⊃ Tab ⊃ Pane：全是格子。格子里住的 shell 进程才是干活的人——每个都有自己的 cwd 和便签副本。</div>
+        </div>`,
+      key: "<strong>容器（window/tab/pane）可以随便开；每开一个格子，通常就诞生一个新的 shell 进程。</strong>格子是死的，进程是活的。"
+    },
+    { type: "predict",
+      title: "Predict：两个 tabs = 两个 shells？",
+      scenario: `你在 Windows Terminal 里按两次 <span class="term-inline">Ctrl+Shift+T</span>，开了两个新 tab，每个都是 PowerShell。<strong>你现在有几个 shell 在跑？</strong>`,
+      options: [
+        { t: "一个——所有 tab 共享同一个 PowerShell", ok: false, why: "那样的话你在 tab 1 cd 到别处，tab 2 也会跟着动——实际并不会。" },
+        { t: "三个（含原来的 tab）——每个 tab 一个独立的 PowerShell 进程，各有各的 cwd 和环境变量副本", ok: true },
+        { t: "零个——PowerShell 是窗口的一部分，不是进程", ok: false, why: "Shell 是程序，程序运行起来就是进程。" },
+        { t: "取决于电脑配置", ok: false, why: "和配置无关，这是终端的默认工作方式。" }
+      ],
+      explain: `答案 B。每个 tab 一个 shell <strong>进程</strong>：各自独立地出生、领自己的环境变量副本、记自己的 cwd。这正是 Level 7 的便签模型在窗口层面的表现——<strong>进程之间互不知道对方的存在</strong>。想验证？在两个 tab 里分别 cd 到不同文件夹，再各跑一次 pwd。`,
+      hints: [
+        "回想 Level 7：每个进程拿一份自己的便签",
+        "每个 tab 有自己的提示符状态（cwd）吗？有",
+        "Answer: 三个——每个 tab 一个独立 shell 进程"
+      ]
+    },
+    { type: "concept",
+      title: "Standard User vs Administrator：权限的三层词",
+      body: `
+        <p>这一组概念用三个词讲清：</p>
+        <ul>
+          <li><strong>Permission（许可）</strong>：对具体资源的允许/拒绝。比如「你的账户能不能写 C:\\Windows」。</li>
+          <li><strong>Privilege（特权级别）</strong>：你账户的整体权限档位。日常你是 standard user（标准用户）：能完全控制自己的文件，<strong>不能</strong>动系统区域——还记得 <span class="term-inline">cd C:\\Windows</span> 的 Access denied 吗？那就是权限在工作，不是错误。</li>
+          <li><strong>Elevation（提权）</strong>：临时升档的动作。右键「以管理员身份运行」打开的 elevated terminal，标题栏会多一个 Administrator 字样；里面的命令有了动系统的许可。那个 UAC 弹窗就是提权的门禁。</li>
+        </ul>
+        <p><strong>Least privilege（最小权限原则）</strong>：平时用普通权限，只在确实需要时提权。理由很朴素——在管理员窗口里，一次手滑的 <span class="term-inline">rm</span> 可能删掉系统；在普通窗口里，它只会拒绝你。<strong>Permission denied 常常不是「出问题了」，而是「这个操作本来就不该由现在的你做」。</strong></p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="210" viewBox="0 0 660 210">
+          <rect x="30" y="20" width="290" height="160" rx="12" fill="#161b22" stroke="#3fb950"/>
+          <text x="175" y="46" fill="#3fb950" font-size="13" text-anchor="middle" font-weight="bold">普通 Terminal</text>
+          <text x="46" y="76" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">PS C:\\Users\\YOGA&gt;</text>
+          <text x="46" y="104" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">cd C:\\Windows</text>
+          <text x="46" y="130" fill="#f85149" font-size="11" font-family="Consolas,monospace">Access denied ✗</text>
+          <text x="46" y="160" fill="#9aa7b4" font-size="11">能读写自己的地盘 ✓</text>
+          <rect x="350" y="20" width="290" height="160" rx="12" fill="#161b22" stroke="#d29922"/>
+          <text x="495" y="46" fill="#d29922" font-size="13" text-anchor="middle" font-weight="bold">⛨ Administrator Terminal</text>
+          <text x="366" y="76" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">PS C:\\Windows\\System32&gt;</text>
+          <text x="366" y="104" fill="#e6edf3" font-size="11" font-family="Consolas,monospace">（改系统文件）</text>
+          <text x="366" y="130" fill="#3fb950" font-size="11" font-family="Consolas,monospace">✓ 放行</text>
+          <text x="366" y="160" fill="#9aa7b4" font-size="11">手滑代价 = 系统损坏 ⚠</text>
+        </svg>
+        <div class="cap">同一个你、同一台电脑，权限档位不同，结果不同。denied 是门禁在履行职责。</div>
+        </div>`,
+      key: "<strong>Permission denied ≠ 出错了。</strong>先问：这个操作需要更高权限，还是本来就不该做？平时待在普通权限里。"
+    },
+    { type: "terminal",
+      title: "Try it: 亲眼看看门禁——cd C:\\Windows",
+      goal: `依次输入 <code>cd C:\Windows</code> 观察报错，然后输入 <code>pwd</code> 确认你的位置没有变。`,
+      background: `Level 5 见过 Access denied，现在你知道它背后的机制了：<span class="term-inline">C:\\Windows</span> 真实存在，但 standard user 不被允许进入。预测两个命令的结果，再执行。`,
+      hints: [
+        "先想：这是「路径不存在」还是「权限不足」？错误信息里有线索。",
+        "cd C:\\Windows —— 读错误的括号提示。",
+        "Answer: cd C:\\Windows 然后 pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA",
+      success: "看到了吗：cd 被拒了，pwd 显示你还站在 YOGA——denied 的意思是「不许进」，不是「找不到」。门禁守门，但你的位置没动。",
+      internals: "shell 把路径解析成功（C:\\Windows 存在），交给 OS 请求进入；OS 检查你的访问令牌（access token）——标准用户没有写/进系统目录的许可——于是拒绝。<strong>路径解析和权限检查是两道独立的门。</strong>",
+      breakdown: [
+        { token: "cd", label: "command 命令", text: "请求改变当前目录。" },
+        { token: "C:\\Windows", label: "argument 参数（系统目录）", text: "路径真实存在，但你的账户级别不够 → Access denied。" },
+        { token: "pwd", label: "command 命令", text: "只读不写：打印当前位置，确认你没动。" }
+      ]
+    },
+    { type: "concept",
+      title: "双击 vs 命令：同一件事的两条路",
+      body: `
+        <p>你在 File Explorer 双击 <span class="term-inline">notes.txt</span> 时，背后发生了：</p>
+        <ol>
+          <li>Windows 查 <span class="term-inline">file association</span>（.txt 注册给了谁）</li>
+          <li>启动对应的程序（Notepad）</li>
+          <li>Notepad 打开这个文件</li>
+        </ol>
+        <p>你在 terminal 输入 <span class="term-inline">notepad notes.txt</span> 时：</p>
+        <ol>
+          <li>Shell 在 PATH 里找到 <span class="term-inline">notepad.exe</span></li>
+          <li>OS 启动它</li>
+          <li>Notepad 打开这个文件</li>
+        </ol>
+        <p><strong>殊途同归。</strong>两条路的终点完全一样：同一个程序、同一个文件。区别只在「谁发起、怎么表达」。双击是 GUI 的「命令」；命令是 terminal 的「点击」。</p>
+        <p>还有一层值得说破：<span class="term-inline">notepad file.txt</span> 这类命令，是「terminal 启动一个 <strong>GUI 程序</strong>来打开文件」——terminal 自己并没有「打开文件」的能力，它只是叫来了能干这事的程序。终端的能力 = 它能启动的程序的集合。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="680" height="200" viewBox="0 0 680 200">
+          <defs><marker id="a8c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#3fb950"/></marker></defs>
+          <rect x="20" y="20" width="180" height="46" rx="10" fill="#161b22" stroke="#2d333f"/>
+          <text x="110" y="40" fill="#e6edf3" font-size="12" text-anchor="middle">GUI 路径</text>
+          <text x="110" y="57" fill="#9aa7b4" font-size="10" text-anchor="middle">双击 notes.txt</text>
+          <rect x="240" y="20" width="180" height="46" rx="10" fill="#161b22" stroke="#2d333f"/>
+          <text x="330" y="40" fill="#e6edf3" font-size="12" text-anchor="middle">Terminal 路径</text>
+          <text x="330" y="57" fill="#9aa7b4" font-size="10" text-anchor="middle">notepad notes.txt</text>
+          <line x1="200" y1="43" x2="235" y2="43" stroke="#3fb950" stroke-width="2"/>
+          <line x1="420" y1="43" x2="455" y2="43" stroke="#3fb950" stroke-width="2" marker-end="url(#a8c)"/>
+          <rect x="460" y="10" width="200" height="66" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="560" y="34" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">同一个终点</text>
+          <text x="560" y="54" fill="#e6edf3" font-size="11" text-anchor="middle">Notepad 打开 notes.txt</text>
+          <text x="340" y="110" fill="#9aa7b4" font-size="11" text-anchor="middle">「terminal 打开文件」=「terminal 启动一个 GUI 程序，由它来打开文件」</text>
+          <rect x="90" y="130" width="500" height="52" rx="10" fill="#0d1117" stroke="#2d333f"/>
+          <text x="110" y="152" fill="#a5d6ff" font-size="11" font-family="Consolas,monospace">notepad file.txt   code .   start .   explorer .</text>
+          <text x="110" y="170" fill="#9aa7b4" font-size="10">四个「叫 GUI 程序出来干活」的常见命令——下一节你在模拟器里亲手试</text>
+        </svg>
+        <div class="cap">发起方式不同，终点相同。terminal 不是「另一种文件管理器」，它是「能叫来任何程序的现场」。</div>
+        </div>`,
+      key: "<strong>双击和命令是同一件事的两种表达。</strong>而「terminal 打开文件」的真身是：terminal 启动一个 GUI 程序替你打开。"
+    },
+    { type: "terminal",
+      title: "Try it: 从 terminal 召唤 GUI",
+      goal: `在终端里依次输入 <code>explorer .</code>（在 File Explorer 里打开当前文件夹）和 <code>notepad Documents\notes.txt</code>（用记事本打开一个真实文件）。`,
+      background: `这两个命令本身不是重点——重点是观察它们的行为模式：shell 找到程序 → OS 启动它 → <strong>一个 GUI 窗口出现</strong>。终端没有变成 GUI，它只是把 GUI 程序叫到了台前。`,
+      hints: [
+        "两个命令各自运行一次；参数里的 . 表示「当前文件夹」",
+        "explorer . 然后 notepad Documents\\notes.txt",
+        "Answer: explorer . → notepad Documents\\notes.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "notepad" && r.resolved && r.resolved.join("\\").indexOf("notes.txt") !== -1,
+      success: "两个 GUI 窗口「弹出」了（模拟的）。体会一下：你全程在 CLI 里，最后却召唤出了 GUI。terminal 的能力边界 = 它能启动的程序。",
+      internals: "explorer / notepad 都是普通 .exe，住在 PATH 里的 C:\\Windows。shell 找到它们、OS 启动它们；它们各自创建 GUI 窗口。<strong>CLI 和 GUI 不是对立的——CLI 可以生成 GUI。</strong>",
+      breakdown: [
+        { token: "explorer / notepad", label: "program 程序（GUI 程序）", text: "它们和 git.exe 一样被 PATH 找到——只是它们的输出是窗口，不是文字。" },
+        { token: ". / Documents\\notes.txt", label: "argument 参数", text: "告诉程序对谁干活：当前文件夹 / 这个文件。" }
+      ]
+    },
+    { type: "fill",
+      title: "Fill in: 开发者最高频的召唤咒",
+      scenario: `你刚 cd 进项目文件夹 <span class="term-inline">C:\\Users\\YOGA\\playground</span>，想用 <strong>VS Code</strong> 打开「当前这个文件夹」。补全这条命令（提示：参数代表「这里」的是一个点）：`,
+      before: `PS C:\\Users\\YOGA\\playground&gt; `,
+      after: ` .`,
+      answer: ["code"],
+      explain: `<span class="term-inline">code .</span> = 用 VS Code 打开当前目录（<span class="term-inline">.</span> 是 Level 2 的老朋友）。这是现实开发中每天十次的命令——在 terminal 里定位，在编辑器里干活，两条 interface 随手切换。`,
+      hints: [
+        "程序名很短，两个字母；参数是「当前目录」的符号",
+        "想想本关卡解剖过的那个 GUI 编辑器，它的 CLI 启动命令",
+        "Answer: code ."
+      ],
+      key: "CLI 负责「定位 + 召唤」，GUI 负责「编辑 + 浏览」——高手在两界之间无缝横跳。"
+    },
+    { type: "ordering",
+      title: "Ordering: 按下 Enter 之后发生了什么？",
+      scenario: `你在提示符后输入 <span class="term-inline">git --version</span> 并按下 Enter。把下面的事件按<strong>真实发生顺序</strong>排列：`,
+      items: [
+        { id: "os", t: "OS 创建一个新进程，运行 git.exe" },
+        { id: "enter", t: "你输入一行命令并按下 Enter" },
+        { id: "prog", t: "git.exe 运行，把版本号写给 shell" },
+        { id: "parse", t: "Shell 把这行文字拆成 program / option" },
+        { id: "find", t: "Shell 在 PATH 清单里找到 git.exe" },
+        { id: "show", t: "Shell 把结果画在你的窗口里" }
+      ],
+      order: ["enter", "parse", "find", "os", "prog", "show"],
+      explain: `链条：<strong>你 → Shell（拆词 + 查找）→ OS（建进程）→ 程序（干活回话）→ Shell（显示）→ 你的眼睛</strong>。整条链上任何一环出问题，就得到对应的那种错误：找不到程序 → command not found；权限不够 → denied；程序自己崩 → 程序报错。诊断错误的第一步，永远是定位链条的哪一环断了。`,
+      hints: [
+        "从「谁最先动」开始：是你，还是 shell？",
+        "先解析，后查找；先找到，才能运行；程序先输出，你才能看见",
+        "Answer: 按 Enter → Shell 解析 → PATH 找到 → OS 建进程 → 程序输出 → Shell 显示"
+      ],
+      key: "错误诊断的地图：command not found = 查找环断了；denied = OS 门禁环拦了；程序报错 = 最后一环的事。"
+    },
+    { type: "matching",
+      title: "Matching: 认窗口——提示符是环境的口音",
+      scenario: `你的任务栏上同时开着 5 个窗口。根据各自的「长相」（提示符样式），认出每个窗口里住的是什么环境：`,
+      pairs: [
+        { l: `<span class="term-inline">PS C:\\Users\\YOGA&gt;</span>（独立窗口）`, r: "Windows Terminal + PowerShell" },
+        { l: `<span class="term-inline">C:\\Users\\YOGA&gt;</span>（独立窗口）`, r: "CMD（命令提示符）" },
+        { l: `<span class="term-inline">YOGA@DESKTOP MINGW64 ~ $</span>`, r: "Git Bash" },
+        { l: `<span class="term-inline">yoga@ubuntu:~$</span>`, r: "WSL · Ubuntu" },
+        { l: `<span class="term-inline">PS C:\\...&gt;</span>（嵌在编辑器底部）`, r: "VS Code Integrated Terminal" }
+      ],
+      choices: [
+        "Windows Terminal + PowerShell",
+        "CMD（命令提示符）",
+        "Git Bash",
+        "WSL · Ubuntu",
+        "VS Code Integrated Terminal",
+        "File Explorer"
+      ],
+      explain: `提示符是环境的「口音」：<strong>PS 前缀</strong> = PowerShell；<strong>光秃秃的路径&gt;</strong> = CMD；<strong>MINGW64</strong> = Git Bash；<strong>user@host:~$</strong> = Linux 家族（WSL Ubuntu）。而同样 PS 前缀，独立窗口和编辑器底部分别是 Windows Terminal 和 VS Code——容器看位置，shell 看口音。`,
+      hints: [
+        "PS 前缀是谁的标识？MINGW64 是谁的标识？",
+        "user@host:~$ 是哪种系统的风格？",
+        "Answer: PS=PowerShell，路径>=CMD，MINGW64=Git Bash，user@host=Ubuntu，编辑器底部=VS Code terminal"
+      ],
+      key: "先听口音（提示符）认 shell，再看位置（独立/嵌套）认容器。"
+    },
+    { type: "multiselect",
+      title: "Multiple Select: 谁是 Bash 家族？",
+      scenario: `提示符 <span class="term-inline">$</span>、命令 <span class="term-inline">ls</span>、家目录写作 <span class="term-inline">~</span>——这些是一家子的「口音」。下面哪些环境里，你打交道的是 <strong>Bash 风格的 shell</strong>？（选出所有）`,
+      options: [
+        { t: "Git Bash", ok: true },
+        { t: "WSL · Ubuntu", ok: true },
+        { t: "CMD", ok: false, why: "CMD 是 Windows 老牌 shell：提示符是 C:\\>，列目录用 dir。" },
+        { t: "PowerShell", ok: false, why: "提示符 PS C:\\>，Cmdlet 是 Verb-Noun 风格——另一个家族。" },
+        { t: "Windows Terminal", ok: false, why: "它是容器 app——不「属于」任何家族，肚子里装谁就是谁的口音。" }
+      ],
+      explain: `答案是前两个。Bash 家族（Git Bash、WSL 里的 Bash）共享同一套语言：<span class="term-inline">ls</span>、<span class="term-inline">~</span>、<span class="term-inline">$</span> 提示符。而「同一个命令这个窗口行、那个窗口不行」的根源就在这里——<strong>你换的每个窗口，都可能换了一个解释你命令的 shell</strong>。顺带一提：PowerShell 里的 dir / ls 只是别名，CMD 的 dir 才是「原生」；Git Bash 里的 dir 也是别名。遇到「命令失效」，第一问：我现在的 shell 是谁？`,
+      hints: [
+        "Windows Terminal 是 shell 还是容器？（容器先排除）",
+        "剩下三个里：谁的名字里就带着 Bash？谁里面跑着 Linux？",
+        "Answer: Git Bash 和 WSL · Ubuntu"
+      ],
+      key: "命令属于 shell，不属于窗口。<strong>窗口随便换，先确认里面住着谁、是哪家口音。</strong>"
+    },
+    { type: "predict",
+      title: "Final Challenge: 一次读出五层",
+      scenario: `屏幕底部嵌着一个终端，提示符 <span class="term-inline">PS C:\\Users\\YOGA\\Documents&gt;</span>，窗口标题栏写的是 VS Code，没有 Administrator 字样。<strong>用一句话说出你看到的全部五层信息。</strong>`,
+      options: [
+        { t: "VS Code 的 integrated terminal，里面住着 PowerShell，普通权限，当前目录是 Documents——VS Code 是容器，PowerShell 是翻译官", ok: true },
+        { t: "Windows 的一部分，PowerShell 窗口，管理员模式", ok: false, why: "容器认错了（这是 VS Code 体内的），权限也认错了（没有 Administrator 字样）。" },
+        { t: "一个 Linux 终端，因为提示符里有 Documents", ok: false, why: "PS 前缀 + 反斜杠路径 = Windows 的 PowerShell，和 Linux 无关。" },
+        { t: "VS Code 变成了 shell，所以它直接执行命令", ok: false, why: "VS Code 始终是 GUI 容器；执行命令的是它体内的 PowerShell。" }
+      ],
+      explain: `满分读法：<strong>容器</strong> = VS Code integrated terminal（位置：嵌在编辑器底部）；<strong>shell</strong> = PowerShell（口音：PS 前缀）；<strong>位置</strong> = C:\\Users\\YOGA\\Documents（提示符随时在报）；<strong>权限</strong> = standard user（无 Administrator 字样）；<strong>执行者</strong> = PowerShell 解析，OS 放行，程序干活。这就是 Level 8 的毕业标准。`,
+      hints: [
+        "按顺序问五层：容器是谁？shell 是谁？cwd 在哪？权限多大？谁在执行？",
+        "提示符 PS 前缀和路径反斜杠各透露了什么？",
+        "Answer: VS Code 的 integrated terminal + PowerShell + Documents + 普通权限"
+      ]
+    },
+    { type: "concept",
+      title: "毕业地图：从此看任何窗口，五问在手",
+      body: `
+        <p>把这一关压缩成一张地图和五个问题。看到任何窗口、任何面板，依次问：</p>
+        <ol>
+          <li><strong>容器是谁？</strong>（Window / Tab / Pane / 哪个 app）</li>
+          <li><strong>Shell 是谁？</strong>（PowerShell / CMD / Bash / …——听提示符的口音）</li>
+          <li><strong>我在哪？</strong>（cwd，提示符随时在报）</li>
+          <li><strong>我有多大权限？</strong>（standard / elevated）</li>
+          <li><strong>谁在执行我的命令？</strong>（Shell 解析 → OS 放行 → 程序干活）</li>
+        </ol>
+        <p>再加上两条总纲：<strong>GUI 和 CLI 是同一台电脑的两张脸</strong>；<strong>每个格子（tab/pane）住一个独立的 shell 进程</strong>。</p>
+        <p>从此「窗口、面板、终端、Shell、GUI、Git Bash、CMD、PowerShell」同时出现，你不再是面对一团乱麻，而是面对一张有层次的地图。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="290" viewBox="0 0 640 290">
+          <rect x="200" y="8" width="240" height="36" rx="10" fill="#161b22" stroke="#bc8cff"/>
+          <text x="320" y="31" fill="#bc8cff" font-size="13" text-anchor="middle" font-weight="bold">你（User）</text>
+          <rect x="40" y="60" width="270" height="70" rx="10" fill="#161b22" stroke="#2d333f"/>
+          <text x="175" y="84" fill="#e6edf3" font-size="12" text-anchor="middle" font-weight="bold">GUI 分支</text>
+          <text x="175" y="106" fill="#9aa7b4" font-size="10" text-anchor="middle">File Explorer · Settings · VS Code 本体</text>
+          <text x="175" y="120" fill="#9aa7b4" font-size="10" text-anchor="middle">（双击 / 菜单 / 拖放）</text>
+          <rect x="330" y="60" width="270" height="70" rx="10" fill="#161b22" stroke="#58a6ff"/>
+          <text x="465" y="84" fill="#58a6ff" font-size="12" text-anchor="middle" font-weight="bold">CLI 分支</text>
+          <text x="465" y="106" fill="#9aa7b4" font-size="10" text-anchor="middle">Terminal apps：Windows Terminal / VS Code 底部</text>
+          <text x="465" y="120" fill="#9aa7b4" font-size="10" text-anchor="middle">（Window → Tab → Pane：全是容器）</text>
+          <rect x="330" y="142" width="270" height="56" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="465" y="164" fill="#d29922" font-size="12" text-anchor="middle" font-weight="bold">Shell（每格一个进程）</text>
+          <text x="465" y="184" fill="#9aa7b4" font-size="10" text-anchor="middle">PowerShell · CMD · Bash(Git Bash) · Bash(WSL)</text>
+          <line x1="465" y1="130" x2="465" y2="140" stroke="#58a6ff" stroke-width="2"/>
+          <rect x="200" y="212" width="240" height="36" rx="10" fill="#161b22" stroke="#3fb950"/>
+          <text x="320" y="235" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">Operating System（门禁 + 进程工厂）</text>
+          <line x1="175" y1="130" x2="300" y2="212" stroke="#2d333f" stroke-width="1.5"/>
+          <line x1="465" y1="198" x2="360" y2="212" stroke="#2d333f" stroke-width="1.5"/>
+          <rect x="120" y="258" width="400" height="26" rx="8" fill="#0d1117" stroke="#2d333f"/>
+          <text x="320" y="275" fill="#9aa7b4" font-size="11" text-anchor="middle">终点是同一个：文件 · 程序 · 进程（同一台电脑，两种 interface）</text>
+        </svg>
+        <div class="cap">毕业地图。以后每学一个新环境（WSL、远程 SSH…），先在这张图上给它找位置。</div>
+        </div>`,
+      key: "<strong>五问在手：容器？Shell？位置？权限？谁在执行？</strong>——这五问会陪你走完整个项目。"
+    }
+  ]
+}
+
 ];
 
 /* ================================================================
@@ -2006,18 +2659,72 @@ const REVIEWS = {
     ]
   }
 
+,
+  8: {
+    concepts: [
+      "GUI 和 CLI 是同一台电脑、同一棵文件树的两种 interface——双击 Documents 和 cd Documents 到达同一个地方",
+      "四层骨架：你 → Terminal 应用（容器，只显示）→ Shell（解析命令：PowerShell/CMD/Bash）→ OS（建进程、管权限）",
+      "Window/Tab/Pane 是 UI 容器，Shell/Process 是运行住客——每开一个 tab 通常多一个独立 shell 进程（各有 cwd 和环境变量副本）",
+      "Permission（资源许可）/ Privilege（账户档位）/ Elevation（临时提权）：Access denied 是门禁履职，不是错误；平时遵守 least privilege",
+      "「terminal 打开文件」= terminal 启动一个 GUI 程序替你打开（notepad/code/explorer）；CLI 可以召唤 GUI",
+      "诊断任何环境先问五层：容器是谁？shell 是谁（听提示符口音）？cwd 在哪？权限多大？谁在执行？"
+    ],
+    commands: [
+      { cmd: "explorer . / start .", en: "—", zh: "在文件资源管理器里打开文件夹（GUI 召唤）" },
+      { cmd: "notepad <file>", en: "—", zh: "用记事本打开文件（GUI 召唤）" },
+      { cmd: "code .", en: "—", zh: "用 VS Code 打开当前文件夹——开发者最高频命令" }
+    ],
+    terms: [
+      { en: "GUI / CLI", zh: "图形界面 / 命令行界面", ex: "File Explorer vs Terminal" },
+      { en: "terminal emulator / app", zh: "终端应用（容器）", ex: "Windows Terminal、VS Code 底部终端" },
+      { en: "console", zh: "≈ terminal（历史词）", ex: "日常使用可互换" },
+      { en: "PowerShell / CMD / Bash", zh: "三种 shell", ex: "PS C:\\> / C:\\> / user@host:~$" },
+      { en: "Git Bash", zh: "Windows 上的 Bash 环境", ex: "MINGW64，随 Git for Windows 附带" },
+      { en: "integrated terminal", zh: "嵌在编辑器里的终端", ex: "VS Code 底部面板" },
+      { en: "tab / pane", zh: "标签页 / 分栏", ex: "容器里的容器，各住一个 shell" },
+      { en: "elevation / UAC", zh: "提权 / 门禁弹窗", ex: "Administrator 终端" },
+      { en: "least privilege", zh: "最小权限原则", ex: "平时普通权限，需要才提权" },
+      { en: "file association", zh: "文件关联", ex: "双击 .txt → Notepad" }
+    ],
+    mistakes: [
+      "把窗口标题栏的名字当成 shell 的名字——标题栏写的是 app，不是 shell",
+      "以为「在 VS Code 里打开 Terminal」=「VS Code 是 Terminal」——VS Code 是 GUI 容器，终端是它体内的同类东西",
+      "以为 Access denied 是命令打错了——路径存在、权限不够，是两道独立的门",
+      "把 Git Bash 当成 Git 本身——Git Bash 是 Bash 环境，git 只是住在里面的程序",
+      "以为开两个 tab 共享同一个 shell——每个 tab 一个进程，互不相干",
+      "命令在一个窗口行、另一个窗口不行就慌——先问：现在的 shell 是谁？"
+    ],
+    quiz: [
+      { q: "你在 Windows Terminal 里新开一个 Ubuntu tab。Windows Terminal 变成 Linux 了吗？", options: [
+        { t: "是——窗口已经是 Linux 程序", ok: false, why: "容器没变，变的是 tab 里的住客。" },
+        { t: "否——app 还是 Windows Terminal，只是这个 tab 里住的是 Ubuntu 的 Bash（WSL）", ok: true, why: "" },
+        { t: "半个 Linux", ok: false, why: "WSL 是独立环境，和终端 app 无关。" },
+        { t: "取决于网络", ok: false, why: "完全本地。" } ] },
+      { q: "提示符 YOGA@DESKTOP MINGW64 ~ $ 属于哪个环境？", options: [
+        { t: "PowerShell", ok: false, why: "PowerShell 的提示符是 PS C:\\>。" },
+        { t: "Git Bash", ok: true, why: "" },
+        { t: "CMD", ok: false, why: "CMD 是 C:\\>。" },
+        { t: "WSL Ubuntu", ok: false, why: "Ubuntu 提示符是 user@host:~$，没有 MINGW64 字样。" } ] },
+      { q: "为什么平时应该用普通权限的终端，而不是凡事都用 Administrator？", options: [
+        { t: "管理员终端启动更慢", ok: false, why: "速度不是理由。" },
+        { t: "Least privilege：手滑/恶意的破坏半径被权限限制在最小范围", ok: true, why: "" },
+        { t: "管理员终端不能用 cd", ok: false, why: "它什么都能做——这正是危险所在。" },
+        { t: "普通终端颜色更好看", ok: false, why: "……不是。" } ] }
+    ]
+  }
+
 };
 
 const ROADMAP = [
   { mod: "A", name: "File System & Paths · 文件系统与路径", levels: [0,1,2], desc: "Level 0 操作对象 → Level 1 文件与文件夹 → Level 2 路径（绝对/相对/..）" },
   { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
-  { mod: "C", name: "Programs, PATH & Environment · 程序与 PATH", levels: [6,7], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量（为什么 latex --version 能找到 latex）" },
-  { mod: "D", name: "Git & GitHub", levels: [8,9,10,11,12,13,14], desc: "Level 8 Git mental model → 9 GitHub → 10 Repository → 11 clone/status/add/commit → 12 remote/push/pull（含 fetch vs pull 可视化）→ 13 分支与合并 → 14 阅读真实仓库 LaTeX-Workshop-2026" },
-  { mod: "E", name: "Development Environment · 开发环境", levels: [15,16], desc: "Level 15 VS Code 与开发环境 → Level 16 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
-  { mod: "F", name: "Network Basics · 网络基础", levels: [17,18], desc: "Level 17 IP / DNS / 网络连接 → Level 18 ping / ipconfig / nslookup / 代理" },
-  { mod: "G", name: "Windows System Tools · Windows 系统工具", levels: [19,20], desc: "Level 19 任务管理器 / 进程 / CPU·内存·磁盘 → Level 20 环境变量界面 / 权限 / Administrator" },
-  { mod: "H", name: "WSL & Linux Basics", levels: [21], desc: "Level 21 WSL → Ubuntu → Bash：Windows 里跑 Linux，以及三套命令为何不同" },
-  { mod: "I", name: "Troubleshooting & Final · 排查与综合", levels: [22], desc: "Level 22 错误诊断综合训练：command not found / permission denied / not a git repository → 最终挑战" }
+  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8 Terminal Ecosystem（GUI/CLI、Terminal vs Shell、Git Bash 辨析、VS Code 内置终端、权限与提权、窗口识别五问）" },
+  { mod: "D", name: "Git & GitHub", levels: [9,10,11,12,13,14,15], desc: "Level 9 Git mental model → 10 GitHub → 11 Repository → 12 clone/status/add/commit → 13 remote/push/pull（含 fetch vs pull 可视化）→ 14 分支与合并 → 15 阅读真实仓库 LaTeX-Workshop-2026" },
+  { mod: "E", name: "Development Environment · 开发环境", levels: [16,17], desc: "Level 16 VS Code 与开发环境 → Level 17 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
+  { mod: "F", name: "Network Basics · 网络基础", levels: [18,19], desc: "Level 18 IP / DNS / 网络连接 → Level 19 ping / ipconfig / nslookup / 代理" },
+  { mod: "G", name: "Windows System Tools · Windows 系统工具", levels: [20,21], desc: "Level 20 任务管理器 / 进程 / CPU·内存·磁盘 → Level 21 环境变量界面 / 权限 / Administrator" },
+  { mod: "H", name: "WSL & Linux Basics", levels: [22], desc: "Level 22 WSL → Ubuntu → Bash：Windows 里跑 Linux，以及三套命令为何不同" },
+  { mod: "I", name: "Troubleshooting & Final · 排查与综合", levels: [23], desc: "Level 23 错误诊断综合训练：command not found / permission denied / not a git repository → 最终挑战" }
 ];
 
 /* ---------- 通用命令拆解器 ----------
@@ -2259,6 +2966,229 @@ function render(){
           fb.innerHTML = `<strong>❌ Not quite.</strong> ${opt.why || "Think again — the concept in the previous step has the clue."}<br>(wrong option eliminated — keep trying)`;
         }
       });
+    });
+  }
+
+  /* ===== v1.3 Level 8 新题型共享工具 ===== */
+  const finishStep = () => {
+    markStepDone(li, si);
+    const nx = document.getElementById("navNext");
+    nx.disabled = false; nx.classList.add("primary");
+  };
+  const hintUI = `<div class="task-actions"><button class="btn" id="hintBtn2">💡 Hint</button></div><div class="hint-box" id="hintBox2"></div>`;
+  const wireHint = (s) => {
+    let lvl = 0;
+    const hb = document.getElementById("hintBox2");
+    if(!hb) return;
+    document.getElementById("hintBtn2").addEventListener("click", () => {
+      if(lvl < s.hints.length){
+        hb.classList.add("show");
+        hb.innerHTML = "<strong>Hint " + (lvl + 1) + "/" + s.hints.length + ":</strong> " + s.hints[lvl];
+        lvl++;
+      } else {
+        hb.innerHTML = "<strong>No more hints.</strong> Think about the concept a few steps back — the answer is hiding there.";
+      }
+    });
+  };
+  const showOk = (el, msg) => { el.className = "feedback show ok"; el.innerHTML = "<strong>✅ Correct!</strong><br>" + msg; };
+
+  /* ---- multiselect：多个正确答案 ---- */
+  if(step.type === "multiselect"){
+    html += `<div class="card"><div class="predict-scenario">${step.scenario}</div>
+      <div class="ms-list">` + step.options.map((o, i) =>
+        `<label class="ms-opt" data-i="${i}"><input type="checkbox"><span>${o.t}</span></label>`).join("") + `</div>
+      <div class="task-actions" style="margin-top:12px"><button class="btn primary" id="msCheck">Check</button></div>
+      <div class="feedback" id="fb"></div>${hintUI}</div>`;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    wireHint(step);
+    let done = false;
+    document.getElementById("msCheck").addEventListener("click", () => {
+      if(done) return;
+      const fb = document.getElementById("fb");
+      const boxes = Array.from(stepContent.querySelectorAll(".ms-opt"));
+      const sel = boxes.filter(b => b.querySelector("input").checked && !b.classList.contains("eliminated"));
+      const correctIdx = step.options.map((o, i) => o.ok ? i : -1).filter(i => i >= 0);
+      const selIdx = sel.map(b => Number(b.dataset.i));
+      const wrongPicked = selIdx.filter(i => !step.options[i].ok);
+      const missing = correctIdx.filter(i => !selIdx.includes(i));
+      if(wrongPicked.length === 0 && missing.length === 0){
+        done = true;
+        boxes.forEach((b, i) => { b.querySelector("input").disabled = true; if(step.options[i].ok) b.classList.add("picked"); });
+        showOk(fb, step.explain);
+        finishStep();
+      } else {
+        wrongPicked.forEach(i => {
+          const b = boxes[i];
+          b.classList.add("eliminated");
+          b.querySelector("input").checked = false;
+          b.querySelector("input").disabled = true;
+        });
+        fb.className = "feedback show no";
+        let msg = "";
+        if(wrongPicked.length) msg += wrongPicked.map(i => "<strong>" + esc(step.options[i].t) + "</strong>：" + (step.options[i].why || "不对——再想想它到底是什么。")).join("<br>");
+        if(missing.length) msg += (msg ? "<br>" : "") + "还没选全：有 " + missing.length + " 个正确答案还没被选中。";
+        fb.innerHTML = "<strong>❌ Not quite.</strong> " + msg + "<br>(错误选项已排除——继续)";
+      }
+    });
+  }
+
+  /* ---- matching：连线匹配 ---- */
+  if(step.type === "matching"){
+    html += `<div class="card">`;
+    if(step.scenario) html += `<div class="predict-scenario">${step.scenario}</div>`;
+    html += `<div class="match-grid">` + step.pairs.map((p, i) =>
+      `<div class="match-left">${p.l}</div>
+       <select class="match-sel" data-i="${i}"><option value="">选择匹配项…</option>` +
+       step.choices.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("") + `</select>`).join("") +
+      `</div>
+      <div class="task-actions" style="margin-top:12px"><button class="btn primary" id="mcCheck">Check</button></div>
+      <div class="feedback" id="fb"></div>${hintUI}</div>`;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    wireHint(step);
+    let done = false;
+    document.getElementById("mcCheck").addEventListener("click", () => {
+      if(done) return;
+      const fb = document.getElementById("fb");
+      const sels = Array.from(stepContent.querySelectorAll(".match-sel"));
+      const wrong = [];
+      sels.forEach((s, i) => { s.classList.remove("bad", "good"); if(s.value !== step.pairs[i].r) wrong.push(i); });
+      if(wrong.length === 0){
+        done = true;
+        sels.forEach(s => { s.disabled = true; s.classList.add("good"); });
+        showOk(fb, step.explain);
+        finishStep();
+      } else {
+        wrong.forEach(i => sels[i].classList.add("bad"));
+        fb.className = "feedback show no";
+        fb.innerHTML = "<strong>❌ " + wrong.length + " 处不匹配。</strong> 红色下拉框是错的——想想那个东西的本质角色，重选后再 Check。" + (step.whyWrong || "");
+      }
+    });
+  }
+
+  /* ---- ordering：排出正确顺序 ---- */
+  if(step.type === "ordering"){
+    html += `<div class="card"><div class="predict-scenario">${step.scenario}</div>
+      <div class="order-lane"><div class="order-lane-label">按发生顺序点击下面的条目（再点可撤回）：</div>
+        <div class="order-ans" id="orderAns"><span style="color:var(--dim);font-size:13px">（空的——从下方点击添加）</span></div>
+      </div>
+      <div class="order-pool" id="orderPool">` +
+      step.items.map(it => `<button class="order-chip" data-id="${esc(it.id)}">${esc(it.t)}</button>`).join("") + `</div>
+      <div class="task-actions"><button class="btn primary" id="odCheck">Check</button><button class="btn" id="odReset">Reset</button></div>
+      <div class="feedback" id="fb"></div>${hintUI}</div>`;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    wireHint(step);
+    let done = false;
+    const ans = [];
+    const renderAns = () => {
+      const lane = document.getElementById("orderAns");
+      lane.innerHTML = ans.length === 0 ? '<span style="color:var(--dim);font-size:13px">（空的——从下方点击添加）</span>'
+        : ans.map((id, n) => { const it = step.items.find(x => x.id === id);
+            return `<button class="order-chip seq" data-id="${esc(id)}"><span class="seq-n">${n + 1}</span>${esc(it.t)}</button>`; }).join("");
+      lane.querySelectorAll(".order-chip.seq").forEach(ch => ch.addEventListener("click", () => {
+        if(done) return;
+        const id = ch.dataset.id;
+        ans.splice(ans.indexOf(id), 1);
+        stepContent.querySelector(`#orderPool .order-chip[data-id="${CSS.escape(id)}"]`).classList.remove("used");
+        renderAns();
+      }));
+    };
+    stepContent.querySelectorAll("#orderPool .order-chip").forEach(ch => ch.addEventListener("click", () => {
+      if(done || ch.classList.contains("used")) return;
+      ch.classList.add("used");
+      ans.push(ch.dataset.id);
+      renderAns();
+    }));
+    document.getElementById("odReset").addEventListener("click", () => {
+      if(done) return;
+      ans.length = 0;
+      stepContent.querySelectorAll("#orderPool .order-chip").forEach(c => c.classList.remove("used"));
+      renderAns();
+    });
+    document.getElementById("odCheck").addEventListener("click", () => {
+      if(done) return;
+      const fb = document.getElementById("fb");
+      if(ans.length < step.items.length){
+        fb.className = "feedback show no";
+        fb.innerHTML = "<strong>还没排完。</strong> 把所有 " + step.items.length + " 个条目都排进去再 Check。";
+        return;
+      }
+      if(ans.every((id, n) => id === step.order[n])){
+        done = true;
+        showOk(fb, step.explain);
+        finishStep();
+      } else {
+        fb.className = "feedback show no";
+        fb.innerHTML = "<strong>❌ 顺序不对。</strong> 从「谁最先发生」开始想：你按下 Enter 之后，第一个动的是谁？";
+      }
+    });
+  }
+
+  /* ---- fill：补全命令/概念 ---- */
+  if(step.type === "fill"){
+    const accepts = Array.isArray(step.answer) ? step.answer : [step.answer];
+    html += `<div class="card"><div class="predict-scenario">${step.scenario}</div>
+      <div class="fill-line">${step.before}<input class="fill-input" id="fillIn" spellcheck="false" autocomplete="off">${step.after}</div>
+      <div class="task-actions"><button class="btn primary" id="fillCheck">Check</button></div>
+      <div class="feedback" id="fb"></div>${hintUI}</div>`;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    wireHint(step);
+    let done = false;
+    const check = () => {
+      if(done) return;
+      const inp = document.getElementById("fillIn");
+      const fb = document.getElementById("fb");
+      const v = inp.value.trim().toLowerCase();
+      if(accepts.map(a => a.toLowerCase()).includes(v)){
+        done = true;
+        inp.disabled = true;
+        showOk(fb, step.explain);
+        finishStep();
+      } else {
+        inp.classList.remove("bad"); void inp.offsetWidth; inp.classList.add("bad");
+        fb.className = "feedback show no";
+        fb.innerHTML = "<strong>❌ Not quite.</strong> 想想这个空缺的「角色」是什么——是程序名？文件夹名？还是选项？(按 Hint 逐级提示)";
+      }
+    };
+    document.getElementById("fillCheck").addEventListener("click", check);
+    document.getElementById("fillIn").addEventListener("keydown", e => { if(e.key === "Enter") check(); });
+  }
+
+  /* ---- clickmap：点击界面元素逐层解剖 ---- */
+  if(step.type === "clickmap"){
+    const zones = step.zones.map((z, i) =>
+      `<button class="cm-zone" data-i="${i}" style="left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%" title="点击解剖这一块"></button>`).join("");
+    html += `<div class="card">${step.intro}</div>
+      <div class="clickmap-wrap">${step.svg}${zones}</div>
+      <div class="cm-info" id="cmInfo"><span style="color:var(--dim)">👆 点击图中闪烁感应区，逐块解剖这个窗口（${step.zones.length} 块）</span></div>
+      <div class="cm-progress" id="cmProg">已解剖 0 / ${step.zones.length}</div>
+      <div style="margin-top:10px"><button class="btn success" id="cmDone" disabled>Got it — Continue →</button></div>`;
+    if(step.key) html += `<div class="key-point">🧠 <strong>Mental model：</strong>${step.key}</div>`;
+    html += navHTML(li, si, false);
+    stepContent.innerHTML = html;
+    const visited = new Set();
+    stepContent.querySelectorAll(".cm-zone").forEach(z => z.addEventListener("click", () => {
+      const i = Number(z.dataset.i);
+      visited.add(i);
+      stepContent.querySelectorAll(".cm-zone").forEach(zz => zz.classList.toggle("active", zz === z));
+      z.classList.add("visited");
+      const info = step.infos[i];
+      document.getElementById("cmInfo").innerHTML = `<h4>${info.h}<span class="cm-tag">${info.tag}</span></h4>${info.p}`;
+      document.getElementById("cmProg").textContent = "已解剖 " + visited.size + " / " + step.zones.length;
+      if(visited.size === step.zones.length) document.getElementById("cmDone").disabled = false;
+    }));
+    document.getElementById("cmDone").addEventListener("click", () => {
+      const b = document.getElementById("cmDone");
+      if(b.disabled) return;
+      b.disabled = true; b.textContent = "✓ Done";
+      finishStep();
     });
   }
 
@@ -2692,6 +3622,11 @@ document.getElementById("importFile").addEventListener("change", (e) => {
 /* ---------- 启动 ---------- */
 resetTerminal(true);
 render();
+
+/* ---------- E2E 测试钩子（仅 ?e2e 时暴露，正常用户不可见、无影响） ---------- */
+if(location.search.indexOf("e2e") !== -1){
+  window.__e2e = { LEVELS, REVIEWS, ROADMAP, getStep: () => LEVELS[store.level].steps[store.step] };
+}
 </script>
 </body>
 </html>

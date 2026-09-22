@@ -73,3 +73,15 @@ LaTeX 不单独成 Module，归入 **05 Development Environment 中段**，作�
 - 现有 `LEVELS` 数组 + `module` 字段已满足 Module 分组；**不得**引入 `level_0 → level_1 → …` 的线性索引假设，所有代码按 `id` 与数组位置解耦查找。
 - 新增内容类型（project / playground / challenge）以新 `type` 值渐进加入，不为未来类型预留空壳代码。
 - 进度 schema（`store.completed[li] = 已完成步骤下标`）冻结；如需 per-step 状态扩展，新增并行字段并做 fallback，不改旧字段语义。
+
+
+## 9. AI Tutor / Backend 架构预留（Phase 未来实现，现在不做）
+
+来自 Level 8 需求澄清的架构约束，**现阶段只做记录，不引入任何 backend / API / Node server / API Key**：
+
+- **部署形态（现阶段冻结）**：课程保持纯静态（HTML/CSS/JS/localStorage），Question Box 维持 mock / rule-based。课程必须能在完全无 AI 的环境下完整运行。
+- **未来链路**：`Browser → Local Backend → Provider API`。API Key 只存在本地（`.env` + `.gitignore`），浏览器永不直连 API，frontend JS 不硬编码任何 Key。GitHub 仓库公开也不泄露 Key。
+- **Provider 可替换**：backend 按兼容接口抽象，DeepSeek / Kimi / 其他兼容 API 可切换，不把项目写死在单一模型上。
+- **AI 的角色是 tutor，不是 answer machine**：渐进式 Hint 1 → Hint 2 → Explanation → 最后才给答案（现有 Hint 阶梯已按此交互模型设计）；AI 不能代替用户完成练习。
+- **成本透明**：若 API 返回 usage，Tutor 界面显示 input / output / total tokens 与 estimated cost；不为此过度增加复杂度。
+- **Level 8 已完成**：一个 Level（21 个 Step），未拆分；新增题型渲染器（multiselect / matching / ordering / fill / clickmap）为通用能力，后续 Level 复用。AI Tutor 本体留待用户试玩反馈后再定 Phase。
