@@ -4208,8 +4208,13 @@ function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
 const STORE_KEY = "cli-course-progress-v1";
 let store;
 try { store = JSON.parse(localStorage.getItem(STORE_KEY)) || null; } catch(e){ store = null; }
-if(!store || typeof store !== "object") store = { level: 0, step: 0, completed: {} };
-if(typeof store.completed !== "object" || !store.completed) store.completed = {};
+if(!store || typeof store !== "object" || Array.isArray(store)) store = { level: 0, step: 0, completed: {} };
+if(typeof store.completed !== "object" || !store.completed || Array.isArray(store.completed)) store.completed = {};
+// 防御：任何越界/损坏的进度数据都钳回有效范围，绝不让整页空白
+store.level = Math.floor(Number(store.level));
+if(!Number.isFinite(store.level) || store.level < 0 || store.level >= LEVELS.length) store.level = 0;
+store.step = Math.floor(Number(store.step));
+if(!Number.isFinite(store.step) || store.step < 0 || store.step >= LEVELS[store.level].steps.length) store.step = 0;
 
 function saveStore(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(store)); }catch(e){} }
 
@@ -5061,8 +5066,17 @@ document.getElementById("importFile").addEventListener("change", (e) => {
 })();
 
 /* ---------- 启动 ---------- */
-resetTerminal(true);
-render();
+try {
+  resetTerminal(true);
+  render();
+} catch(e){
+  // 最后防线：任何启动错误都重置进度保页面可用，绝不留白屏
+  try { console.error("Startup render failed, resetting progress:", e); } catch(_){}
+  store = { level: 0, step: 0, completed: {} };
+  saveStore();
+  resetTerminal(true);
+  render();
+}
 
 /* ---------- E2E 测试钩子（仅 ?e2e 时暴露，正常用户不可见、无影响） ---------- */
 if(location.search.indexOf("e2e") !== -1){
