@@ -495,12 +495,17 @@ function executeCommand(state, line){
 
   if(cmd === "ls"){
     let targetPath = state.cwd, label = null;
-    if(result.args.length > 0){
-      const r = resolvePath(state, result.args[0]);
+    const nonOpt = result.args.filter(a => a.charAt(0) !== "-");
+    const opts = result.args.filter(a => a.charAt(0) === "-");
+    if(opts.length > 0){
+      result.lines.push({ text: `（模拟器暂不支持选项 ${opts.join(" ")}——真实终端里它是「开关」：比如 -la = 详细列出 + 含隐藏文件。先按普通 ls 显示。）`, cls: "t-dim" });
+    }
+    if(nonOpt.length > 0){
+      const r = resolvePath(state, nonOpt[0]);
       const node = r ? getNode(state.fs, r) : undefined;
       if(!r || node === undefined){
         result.err = true;
-        result.lines.push({ text: `ls: 找不到路径“${result.args[0]}”，因为该路径不存在。`, cls: "t-err" });
+        result.lines.push({ text: `ls: 找不到路径“${nonOpt[0]}”，因为该路径不存在。`, cls: "t-err" });
         return result;
       }
       if(node === null){
@@ -590,6 +595,136 @@ function executeCommand(state, line){
     }
     curNode[name] = {};
     result.lines.push({ text: `已创建文件夹 ${pathStr(state.cwd.concat(name))}\\`, cls: "t-green" });
+    return result;
+  }
+
+  // ===== 文件操作：touch / cat / cp / mv / rm（在虚拟文件系统上） =====
+  if(cmd === "touch"){
+    const name = result.args[0];
+    if(!name){
+      result.err = true;
+      result.lines.push({ text: "touch: 缺少目标。用法：touch <文件名>", cls: "t-err" });
+      return result;
+    }
+    const curNode = getNode(state.fs, state.cwd);
+    if(name in curNode){
+      result.lines.push({ text: `${name} 已存在（真实 touch 会刷新它的时间戳）`, cls: "t-dim" });
+      return result;
+    }
+    curNode[name] = null;
+    result.lines.push({ text: `已创建空文件 ${pathStr(state.cwd.concat(name))}`, cls: "t-green" });
+    return result;
+  }
+
+  if(cmd === "cat"){
+    const arg = result.args[0];
+    if(!arg){
+      result.err = true;
+      result.lines.push({ text: "cat: 缺少目标。用法：cat <文件名>", cls: "t-err" });
+      return result;
+    }
+    const r = resolvePath(state, arg);
+    const node = r ? getNode(state.fs, r) : undefined;
+    if(!r || node === undefined){
+      result.err = true;
+      result.lines.push({ text: `cat: ${arg}: 没有那个文件或目录`, cls: "t-err" });
+      return result;
+    }
+    if(node !== null){
+      result.err = true;
+      result.lines.push({ text: `cat: ${arg}: 是一个文件夹。cat 用来查看文件内容。`, cls: "t-err" });
+      result.lines.push({ text: "（想列文件夹内容请用 ls）", cls: "t-dim" });
+      return result;
+    }
+    result.lines.push({ text: `═══ ${pathStr(r)} 的内容 ═══`, cls: "t-dim" });
+    result.lines.push({ text: "（模拟器不存储文件内容——真实的 cat 会把全文打印在这里）", cls: "t-dim" });
+    result.lines.push({ text: "═══ 文件结束 ═══", cls: "t-dim" });
+    return result;
+  }
+
+  if(cmd === "cp" || cmd === "mv"){
+    if(result.args.length < 2){
+      result.err = true;
+      result.lines.push({ text: `${cmd}: 需要两个目标。用法：${cmd} <来源> <目标>`, cls: "t-err" });
+      return result;
+    }
+    const rSrc = resolvePath(state, result.args[0]);
+    const srcNode = rSrc ? getNode(state.fs, rSrc) : undefined;
+    if(!rSrc || srcNode === undefined){
+      result.err = true;
+      result.lines.push({ text: `${cmd}: ${result.args[0]}: 没有那个文件或目录`, cls: "t-err" });
+      return result;
+    }
+    const rDst = resolvePath(state, result.args[1]);
+    const dstNode = rDst ? getNode(state.fs, rDst) : undefined;
+    if(!rDst){
+      result.err = true;
+      result.lines.push({ text: `${cmd}: 无法解析目标路径“${result.args[1]}”`, cls: "t-err" });
+      return result;
+    }
+    let finalPath = rDst;
+    if(dstNode !== undefined && dstNode !== null){
+      // 目标是已存在的文件夹 → 移入其中
+      finalPath = rDst.concat(rSrc[rSrc.length - 1]);
+      if(getNode(state.fs, finalPath) !== undefined){
+        result.err = true;
+        result.lines.push({ text: `${cmd}: “${pathStr(finalPath)}” 已存在。`, cls: "t-err" });
+        return result;
+      }
+    } else if(dstNode === undefined){
+      // 目标不存在 → 视为新名字；父目录必须存在
+      const parent = rDst.length > 1 ? getNode(state.fs, rDst.slice(0, -1)) : undefined;
+      if(parent === undefined || parent === null){
+        result.err = true;
+        result.lines.push({ text: `${cmd}: 目标文件夹“${pathStr(rDst.slice(0, -1))}”不存在。先 mkdir 它。`, cls: "t-err" });
+        return result;
+      }
+    }
+    if(cmd === "cp"){
+      const clone = (n) => n === null ? null : Object.fromEntries(Object.entries(n).map(([k, v]) => [k, clone(v)]));
+      const parentNode = getNode(state.fs, finalPath.slice(0, -1));
+      parentNode[finalPath[finalPath.length - 1]] = clone(srcNode);
+      result.lines.push({ text: `已复制 ${pathStr(rSrc)} → ${pathStr(finalPath)}`, cls: "t-green" });
+      result.lines.push({ text: "(现在有两份：原文件没动)", cls: "t-dim" });
+    } else {
+      const parentNode = getNode(state.fs, finalPath.slice(0, -1));
+      parentNode[finalPath[finalPath.length - 1]] = srcNode;
+      if(finalPath.join("\\") !== rSrc.join("\\")){
+        const srcParent = getNode(state.fs, rSrc.slice(0, -1));
+        delete srcParent[rSrc[rSrc.length - 1]];
+      }
+      result.lines.push({ text: `已移动 ${pathStr(rSrc)} → ${pathStr(finalPath)}`, cls: "t-green" });
+      result.lines.push({ text: "(原位置没有了——移动不是复制)", cls: "t-dim" });
+    }
+    return result;
+  }
+
+  if(cmd === "rm"){
+    const flags = result.args.filter(a => a.charAt(0) === "-");
+    const target = result.args.filter(a => a.charAt(0) !== "-")[0];
+    if(!target){
+      result.err = true;
+      result.lines.push({ text: "rm: 缺少目标。用法：rm <文件名>（文件夹需 rm -r <文件夹名>）", cls: "t-err" });
+      return result;
+    }
+    const r = resolvePath(state, target);
+    const node = r ? getNode(state.fs, r) : undefined;
+    if(!r || node === undefined){
+      result.err = true;
+      result.lines.push({ text: `rm: ${target}: 没有那个文件或目录`, cls: "t-err" });
+      return result;
+    }
+    const recursive = flags.some(f => f.indexOf("r") !== -1);
+    if(node !== null && !recursive){
+      result.err = true;
+      result.lines.push({ text: `rm: ${target}: 是一个文件夹，里面可能有重要东西。`, cls: "t-err" });
+      result.lines.push({ text: "rm 拒绝直接删文件夹——确认真的要删整个文件夹时，用 rm -r（recurse，递归）。这是 rm 内置的防手滑机制。", cls: "t-dim" });
+      return result;
+    }
+    const parent = getNode(state.fs, r.slice(0, -1));
+    delete parent[r[r.length - 1]];
+    result.lines.push({ text: `已删除 ${pathStr(r)}${node !== null ? "\\（整个文件夹）" : ""}`, cls: "t-green" });
+    result.lines.push({ text: "(虚拟系统里删的，别担心)", cls: "t-dim" });
     return result;
   }
 
@@ -722,7 +857,7 @@ function executeCommand(state, line){
 
   if(cmd === "help"){
     result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
-    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "touch <file>          - create an empty file", "cat <file>            - print a file's content", "cp <src> <dst>        - copy a file/folder", "mv <src> <dst>        - move / rename", "rm <file> / rm -r <dir>- delete (folder needs -r)", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
     return result;
   }
 
@@ -1802,7 +1937,7 @@ const LEVELS = [
 {
   id: 8,
   module: "02 · Command Line ⭐",
-  title: "Understanding the Terminal Ecosystem",
+  title: "Terminal Ecosystem (8.0)",
   en: "The Terminal Ecosystem",
   summary: "建立 Terminal Mental Model：看到任何窗口能回答五层问题——容器（Window/Tab/Pane）是谁、Shell 是谁、cwd 在哪、权限多大、谁在执行。辨析 GUI/CLI、Terminal/Shell/Console、Windows Terminal/PowerShell/CMD、Git/Bash/Git Bash/GitHub、VS Code Integrated Terminal、Standard/Administrator。",
   steps: [
@@ -1897,6 +2032,50 @@ const LEVELS = [
         <div class="cap">四层各管各的：你打字 → 窗口转交 → Shell 翻译 → OS 执行。后面所有混淆，都是把这四层里的某两层当成了同一层。</div>
         </div>`,
       key: "<strong>Terminal ≠ Shell ≠ OS。</strong>窗口是容器，Shell 是翻译官，OS 是大管家。"
+    },
+    { type: "concept",
+      title: "全景地图：六个词，一张图",
+      body: `
+        <p>学到这里，你已经捡到了六个名词。先逐个钉死，再看它们怎么连成一张图：</p>
+        <ul>
+          <li><strong>Terminal（终端应用）</strong>：窗口程序。管键盘输入和屏幕显示，<strong>不理解命令</strong>。</li>
+          <li><strong>Shell（命令解释器）</strong>：住在窗口里的程序。把你的一行文字拆成 command，找到 program 去执行。</li>
+          <li><strong>Command（命令）</strong>：你输入的那行<strong>文字</strong>本身。它是「一句话」，不是程序。</li>
+          <li><strong>Program（程序）</strong>：磁盘上干活的<strong>文件</strong>（如 git.exe、python.exe）。没运行时是死的。</li>
+          <li><strong>Process（进程）</strong>：program <strong>跑起来</strong>的样子。一运行就出生，关掉就消亡，领自己的环境变量副本。</li>
+          <li><strong>Operating System（操作系统）</strong>：大管家。创建进程、管硬件、管权限。上面五位都生活在它之上。</li>
+        </ul>
+        <p>注意 command 和 program 的区别：command 是你写下的句子，program 是句子点名的那个干活的人。Shell 是翻译——把句子变成「去找某某 program 干活」的动作。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="300" viewBox="0 0 640 300">
+          <rect x="220" y="8" width="200" height="34" rx="9" fill="#161b22" stroke="#bc8cff"/>
+          <text x="320" y="30" fill="#bc8cff" font-size="12" text-anchor="middle" font-weight="bold">Computer（计算机）</text>
+          <line x1="320" y1="42" x2="140" y2="66" stroke="#2d333f" stroke-width="1.5"/>
+          <line x1="320" y1="42" x2="500" y2="66" stroke="#2d333f" stroke-width="1.5"/>
+          <rect x="40" y="66" width="200" height="36" rx="9" fill="#161b22" stroke="#2d333f"/>
+          <text x="140" y="88" fill="#e6edf3" font-size="12" text-anchor="middle" font-weight="bold">GUI（图形界面）</text>
+          <rect x="400" y="66" width="200" height="36" rx="9" fill="#161b22" stroke="#58a6ff"/>
+          <text x="500" y="88" fill="#58a6ff" font-size="12" text-anchor="middle" font-weight="bold">CLI（命令行界面）</text>
+          <line x1="500" y1="102" x2="500" y2="124" stroke="#58a6ff" stroke-width="1.5"/>
+          <rect x="400" y="124" width="200" height="36" rx="9" fill="#161b22" stroke="#58a6ff"/>
+          <text x="500" y="140" fill="#58a6ff" font-size="11" text-anchor="middle" font-weight="bold">Terminal App（窗口/标签/面板）</text>
+          <text x="500" y="154" fill="#9aa7b4" font-size="9" text-anchor="middle">只负责显示和转发</text>
+          <line x1="500" y1="160" x2="500" y2="182" stroke="#58a6ff" stroke-width="1.5"/>
+          <rect x="400" y="182" width="200" height="36" rx="9" fill="#161b22" stroke="#d29922"/>
+          <text x="500" y="198" fill="#d29922" font-size="11" text-anchor="middle" font-weight="bold">Shell（PowerShell / CMD / Bash）</text>
+          <text x="500" y="212" fill="#9aa7b4" font-size="9" text-anchor="middle">把 command 翻译成动作</text>
+          <line x1="500" y1="218" x2="500" y2="240" stroke="#58a6ff" stroke-width="1.5"/>
+          <rect x="400" y="240" width="200" height="34" rx="9" fill="#161b22" stroke="#3fb950"/>
+          <text x="500" y="261" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">Commands（命令 = 文字）</text>
+          <rect x="40" y="240" width="280" height="34" rx="9" fill="#161b22" stroke="#3fb950"/>
+          <text x="180" y="261" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">Programs / OS resources（程序 / 系统资源）</text>
+          <line x1="400" y1="257" x2="320" y2="257" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="320" y="292" fill="#9aa7b4" font-size="10" text-anchor="middle">Program 跑起来 = Process；CLI 与 GUI 的终点是同一个 OS</text>
+        </svg>
+        <div class="cap">Computer → GUI / CLI → Terminal App → Shell → Commands → Programs / OS resources。这张图是整个模块的底图。</div>
+        </div>`,
+      key: "<strong>Command 是文字，Program 是文件，Process 是跑起来的 Program。</strong>三个词经常被混着说，但各管一层。"
     },
     { type: "clickmap",
       title: "解剖：一个 Windows Terminal 窗口",
@@ -2028,6 +2207,70 @@ const LEVELS = [
         "Answer: Git=版本控制程序，Bash=Shell，Git Bash=Windows 上的 Bash 环境，GitHub=网站"
       ],
       key: "看到 Git Bash 就默念：<strong>这是个 Bash，只是 Git for Windows 顺带给我的。</strong>"
+    },
+    { type: "concept",
+      title: "Unix / Linux / Bash / WSL / Ubuntu：家族关系一次讲清",
+      body: `
+        <p>这几个词总是一起出现，它们的真实关系（只讲够用的，不上历史课）：</p>
+        <ul>
+          <li><strong>Unix</strong>：上世纪 70 年代 AT&amp;T 推出的操作系统，<strong>不是</strong>开源的。它的设计思想影响了一大批后来的系统——人们把这类传统叫「类 Unix (Unix-like)」。</li>
+          <li><strong>Linux</strong>：1991 年起由社区开发的开源操作系统<strong>内核</strong>（配上 GNU 工具等构成完整系统）。它是「类 Unix」，但<span class="term-inline">Linux ≠ Unix</span>。</li>
+          <li><strong>Bash</strong>：一个 <strong>shell</strong>（Bourne Again SHell，GNU 项目，1989）。它最常住在 Linux 上，但它是程序不是系统——<span class="term-inline">Bash ≠ Linux</span>。它也被移植到 Windows——Git Bash 用的就是它。</li>
+          <li><strong>Ubuntu</strong>：Linux 的一个<strong>发行版</strong>（distro），由 Canonical 维护，带图形界面和一堆预装软件。</li>
+          <li><strong>WSL（Windows Subsystem for Linux）</strong>：Windows 提供的机制，让完整的 Linux 环境<strong>住在 Windows 里面</strong>跑。<span class="term-inline">WSL ≠ Ubuntu</span>——WSL 是「房子」，Ubuntu 是可以住进去的「住户」之一。</li>
+        </ul>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="240" viewBox="0 0 660 240">
+          <defs><marker id="a8d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#58a6ff"/></marker></defs>
+          <rect x="20" y="20" width="150" height="44" rx="10" fill="#161b22" stroke="#2d333f"/>
+          <text x="95" y="40" fill="#e6edf3" font-size="12" text-anchor="middle" font-weight="bold">Unix（1970s）</text>
+          <text x="95" y="56" fill="#9aa7b4" font-size="9" text-anchor="middle">老牌商业 OS · 思想源头</text>
+          <path d="M170,42 L240,42" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a8d)"/>
+          <text x="205" y="34" fill="#9aa7b4" font-size="9" text-anchor="middle">影响</text>
+          <rect x="244" y="20" width="170" height="44" rx="10" fill="#161b22" stroke="#3fb950"/>
+          <text x="329" y="40" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">Linux（1991-）</text>
+          <text x="329" y="56" fill="#9aa7b4" font-size="9" text-anchor="middle">开源 · 类 Unix</text>
+          <rect x="244" y="88" width="170" height="40" rx="10" fill="#161b22" stroke="#3fb950"/>
+          <text x="329" y="105" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">Ubuntu</text>
+          <text x="329" y="119" fill="#9aa7b4" font-size="9" text-anchor="middle">Linux 的一个发行版</text>
+          <line x1="329" y1="64" x2="329" y2="86" stroke="#2d333f" stroke-width="1.5"/>
+          <rect x="470" y="20" width="170" height="44" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="555" y="40" fill="#d29922" font-size="12" text-anchor="middle" font-weight="bold">Bash</text>
+          <text x="555" y="56" fill="#9aa7b4" font-size="9" text-anchor="middle">shell · 不是系统</text>
+          <line x1="414" y1="34" x2="466" y2="34" stroke="#2d333f" stroke-width="1.5"/>
+          <text x="440" y="26" fill="#9aa7b4" font-size="9" text-anchor="middle">常搭配</text>
+          <rect x="470" y="88" width="170" height="60" rx="10" fill="#161b22" stroke="#58a6ff"/>
+          <text x="555" y="108" fill="#58a6ff" font-size="11" text-anchor="middle" font-weight="bold">WSL（Windows 的机制）</text>
+          <text x="555" y="124" fill="#9aa7b4" font-size="9" text-anchor="middle">让 Linux 住进 Windows</text>
+          <text x="555" y="138" fill="#9aa7b4" font-size="9" text-anchor="middle">住户可以是 Ubuntu / Debian…</text>
+          <path d="M470,118 L414,110" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a8d)"/>
+          <rect x="20" y="170" width="620" height="52" rx="10" fill="#0d1117" stroke="#2d333f"/>
+          <text x="36" y="192" fill="#e6edf3" font-size="11">四条不等式：</text>
+          <text x="36" y="210" fill="#f85149" font-size="11" font-family="Consolas,monospace">Bash ≠ Linux（shell 不是系统）   WSL ≠ Ubuntu（机制不是住户）   Git Bash ≠ Linux（只是 Bash 移植）   Linux ≠ Unix（只是类 Unix 传统）</text>
+        </svg>
+        <div class="cap">OS（Unix/Linux/Ubuntu）和 shell（Bash）是两个层级的词；WSL 是 Windows 给 Linux 准备的「客房」。</div>
+        </div>`,
+      key: "<strong>Bash 是 shell，Linux 是系统，Ubuntu 是发行版，WSL 是请 Linux 进 Windows 住的机制。</strong>四句话挡住四个常见混淆。"
+    },
+    { type: "multiselect",
+      title: "What is it NOT：找出错误说法",
+      scenario: `下面 6 句话里，<strong>哪些是错误的？</strong>（选出所有错误项。注意：错误本身就是最好的老师——每个错误选项都会告诉你它错在哪。）`,
+      options: [
+        { t: "“Git Bash 就是 Git，打开 Git Bash 就是在用 Git。”", ok: false, why: "Git Bash 是 Bash 环境；Git 只是住在它 PATH 里的一个程序。打开它 ≠ 在用 Git。" },
+        { t: "“Bash 是 Linux 的另一种叫法。”", ok: false, why: "Bash 是 shell；Linux 是操作系统。一个是翻译官，一个是整栋房子。" },
+        { t: "“WSL 就是 Ubuntu。”", ok: false, why: "WSL 是 Windows 里跑 Linux 的机制；Ubuntu 是可以住在里面的一个发行版。" },
+        { t: "“在 Windows Terminal 里运行 PowerShell 时，是 PowerShell 在解释我的命令。”", ok: true },
+        { t: "“GitHub 是一个运行在我电脑上的程序。”", ok: false, why: "GitHub 是远端网站；运行在你电脑上的是 git（以及浏览器里的网页）。" },
+        { t: "“CMD 和 PowerShell 是两种不同的 shell。”", ok: true }
+      ],
+      explain: `四个错误说法对应四个最高频的混淆：Git Bash≠Git、Bash≠Linux、WSL≠Ubuntu、GitHub≠本地程序。它们有一个共同根源——<strong>把「环境/容器/系统」和「住在里面的程序」画上了等号</strong>。从今以后听到任何名字，先问：它是容器，还是住客？`,
+      hints: [
+        "逐个问：这句话把哪两个不同层级的东西当成了同一个？",
+        "有两个说法是正确描述（PowerShell 解释命令；CMD≠PowerShell），不要把它们选进去",
+        "Answer: 错误的是第 1、2、3、5 句"
+      ],
+      key: "混淆的共同根源：<strong>把容器/系统当成住在里面的程序。</strong>先分层，再命名。"
     },
     { type: "clickmap",
       title: "解剖：VS Code —— GUI 应用 + 体内藏着一个 terminal",
@@ -2364,6 +2607,1098 @@ const LEVELS = [
         <div class="cap">毕业地图。以后每学一个新环境（WSL、远程 SSH…），先在这张图上给它找位置。</div>
         </div>`,
       key: "<strong>五问在手：容器？Shell？位置？权限？谁在执行？</strong>——这五问会陪你走完整个项目。"
+    }
+  ]
+}
+
+,
+{
+  id: "8.1",
+  module: "02 · Command Line ⭐",
+  title: "Command Line Foundations",
+  en: "Command Line Foundations",
+  summary: "回答「What am I talking to?」：GUI 与 CLI 都是在向计算机下指令；Terminal 窗口里发生的事（按键→转发→Shell 解析）；PowerShell / CMD / Bash 对比；Unix / Linux / Bash / Git Bash / WSL 家族关系；Git / Git Bash / GitHub 三问辨析；Permission / Privilege / Elevation 与最小权限。",
+  steps: [
+    { type: "concept",
+      title: "GUI vs CLI：两种说法，同一件事",
+      body: `
+        <p>重新看 GUI 和 CLI——不停在定义上，看它们的<strong>共同点</strong>：</p>
+        <p>不管你在 File Explorer 里<strong>拖动文件</strong>，还是在 terminal 里输入 <span class="term-inline">mv file.txt Documents</span>，你都在做同一件事：<strong>向计算机表达「我要它做什么」</strong>。区别只在表达方式——鼠标点击 vs 键盘文字。</p>
+        <ul>
+          <li>GUI 的指令藏在按钮、菜单、拖放里，看不见摸不着；</li>
+          <li>CLI 的指令就是你写下的那行<strong>文字</strong>——可以抄下来、可以改一个字母再试、可以成为别人的经验。</li>
+        </ul>
+        <p>这就是命令行值得学的原因：它把「操作」变成了「可以阅读和编辑的文字」。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="170" viewBox="0 0 620 170">
+          <rect x="20" y="20" width="240" height="110" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="140" y="46" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="bold">GUI 的说法</text>
+          <text x="140" y="72" fill="#9aa7b4" font-size="11" text-anchor="middle">🖱 拖动 file.txt 到 Documents 图标</text>
+          <text x="140" y="92" fill="#9aa7b4" font-size="11" text-anchor="middle">（指令藏在动作里，看不见）</text>
+          <rect x="360" y="20" width="240" height="110" rx="12" fill="#161b22" stroke="#58a6ff"/>
+          <text x="480" y="46" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">CLI 的说法</text>
+          <text x="480" y="72" fill="#a5d6ff" font-size="12" text-anchor="middle" font-family="Consolas,monospace">mv file.txt Documents</text>
+          <text x="480" y="92" fill="#9aa7b4" font-size="11" text-anchor="middle">（指令是文字：可读、可改、可抄）</text>
+          <text x="310" y="152" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">同一个意图：把 file.txt 移进 Documents</text>
+        </svg>
+        <div class="cap">点击和打字都是「下指令」。CLI 的超能力：指令显形成文字。</div>
+        </div>`,
+      key: "<strong>GUI 和 CLI 都在表达「我要它做什么」。</strong>CLI 把指令变成文字——可保存、可搜索、可复用。"
+    },
+    { type: "predict",
+      title: "Concept Check：指令的共同点",
+      scenario: `你在画图软件里点「保存」按钮；你朋友在 Vim 里输入 <span class="term-inline">:w</span> 按回车。这两件事的共同本质是：`,
+      options: [
+        { t: "都在向计算机下达指令（command）", ok: true },
+        { t: "都需要打开 terminal", ok: false, why: "画图软件里根本没有 terminal——但指令照样存在，只是藏在按钮后面。" },
+        { t: "都会修改文件的扩展名", ok: false, why: "保存和 :w 都不改扩展名。" },
+        { t: "一个是给用户的，一个是给程序员的", ok: false, why: "两者都是人给计算机的指令，受众都是机器。" }
+      ],
+      explain: `答案 A。按钮和 :w 都是 command 的「外壳」——一个披着图形，一个裸露成文字。理解了这层，terminal 就不神秘了：它只是把一直存在的指令<strong>显形</strong>出来。`,
+      hints: [
+        "把按钮翻译成一句话，它在对计算机说什么？",
+        "保存 = “请把当前内容写进磁盘”——这也是一条指令",
+        "Answer: 都在向计算机下达指令"
+      ]
+    },
+    { type: "multiselect",
+      title: "Concept Recognition：CLI 的特征",
+      scenario: `关于 CLI（命令行界面），下面哪些说法是正确的？（选出所有）`,
+      options: [
+        { t: "用键盘输入文字命令来操作计算机", ok: true },
+        { t: "输入的命令需要 shell 来解释执行", ok: true },
+        { t: "输出通常以文字形式显示", ok: true },
+        { t: "必须使用鼠标才能操作", ok: false, why: "鼠标是 GUI 的主角；CLI 的主角是键盘。" },
+        { t: "CLI 比 GUI 高级，学了就该抛弃 GUI", ok: false, why: "两者各有场景：看图选文件用 GUI，批量/远程/脚本用 CLI。是工具箱里的两件工具。" }
+      ],
+      explain: `前三个是 CLI 的「身份证」：文字进、shell 译、文字出。后两个是常见误解——CLI 不是 GUI 的升级版，<strong>它们互为补充</strong>：你在 VS Code（GUI）里写代码，在底部终端（CLI）里跑命令。`,
+      hints: [
+        "回想 Level 8.0 的四层骨架：CLI 这一支上每一环是什么？",
+        "有一个选项和「输入设备」有关，有一个和「价值观」有关——都偏了",
+        "Answer: 前三个（键盘输入 / shell 解释 / 文字输出）"
+      ],
+      key: "CLI 三特征：<strong>文字输入、shell 翻译、文字输出。</strong>与 GUI 互补，不是替代。"
+    },
+    { type: "concept",
+      title: "一个 Terminal 窗口里到底发生了什么",
+      body: `
+        <p>把你的一个按键放大一万倍看。你在 terminal 里键入 <span class="term-inline">p</span> 到屏幕上出现 <span class="term-inline">p</span>，中间经过了两站：</p>
+        <ol>
+          <li><strong>Terminal app 捕获按键</strong>，把字母画在屏幕上（这叫 echo 回显）——它<strong>只转交，不解释</strong>；</li>
+          <li>按 <strong>Enter</strong> 后，这一行被交给 <strong>Shell</strong>；Shell 才开始拆词、查找、执行（8.0 的六环链条）。</li>
+        </ol>
+        <p>所以：你打字时窗口「知道」你按了什么，但只有 shell「懂」你说了什么。窗口是信箱口，shell 是读信的人。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="180" viewBox="0 0 660 180">
+          <defs><marker id="a81a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#58a6ff"/></marker></defs>
+          <rect x="10" y="60" width="120" height="56" rx="10" fill="#161b22" stroke="#bc8cff"/>
+          <text x="70" y="84" fill="#bc8cff" font-size="12" text-anchor="middle" font-weight="bold">你的键盘</text>
+          <text x="70" y="102" fill="#9aa7b4" font-size="10" text-anchor="middle">按下字母 p</text>
+          <line x1="130" y1="88" x2="180" y2="88" stroke="#58a6ff" stroke-width="2" marker-end="url(#a81a)"/>
+          <rect x="182" y="60" width="180" height="56" rx="10" fill="#161b22" stroke="#58a6ff"/>
+          <text x="272" y="82" fill="#58a6ff" font-size="12" text-anchor="middle" font-weight="bold">Terminal app</text>
+          <text x="272" y="100" fill="#9aa7b4" font-size="10" text-anchor="middle">捕获按键 · 画在屏幕上（echo）</text>
+          <line x1="362" y1="88" x2="412" y2="88" stroke="#58a6ff" stroke-width="2" marker-end="url(#a81a)"/>
+          <text x="387" y="76" fill="#d29922" font-size="9" text-anchor="middle">按 Enter 才转交</text>
+          <rect x="414" y="60" width="120" height="56" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="474" y="82" fill="#d29922" font-size="12" text-anchor="middle" font-weight="bold">Shell</text>
+          <text x="474" y="100" fill="#9aa7b4" font-size="10" text-anchor="middle">拆词 · 查找 · 执行</text>
+          <line x1="534" y1="88" x2="584" y2="88" stroke="#58a6ff" stroke-width="2" marker-end="url(#a81a)"/>
+          <rect x="586" y="60" width="68" height="56" rx="10" fill="#161b22" stroke="#3fb950"/>
+          <text x="620" y="82" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">OS</text>
+          <text x="620" y="100" fill="#9aa7b4" font-size="9" text-anchor="middle">进程</text>
+          <text x="330" y="156" fill="#9aa7b4" font-size="11" text-anchor="middle">打字阶段：terminal 只做「传声筒 + 显示屏」；Enter 之后：shell 才开口说话</text>
+        </svg>
+        <div class="cap">同一个窗口里有两班岗：你打字时 terminal 值班，你按 Enter 后 shell 接班。</div>
+        </div>`,
+      key: "<strong>Terminal 转交按键，Shell 解释命令。</strong>打字时的窗口和按 Enter 后的窗口，「值班员」不同。"
+    },
+    { type: "matching",
+      title: "Concept Recognition：六个词各就各位",
+      scenario: `把每个词连到它的正确定义：`,
+      pairs: [
+        { l: "Window / Tab / Pane", r: "界面容器（UI 格子，不运行任何东西）" },
+        { l: "Shell", r: "解释命令的程序（PowerShell / CMD / Bash）" },
+        { l: "Process", r: "跑起来的程序（住在格子里的活住客）" },
+        { l: "Command", r: "你输入的一行文字（一句话）" },
+        { l: "Program", r: "磁盘上干活的文件（如 git.exe）" }
+      ],
+      choices: [
+        "界面容器（UI 格子，不运行任何东西）",
+        "解释命令的程序（PowerShell / CMD / Bash）",
+        "跑起来的程序（住在格子里的活住客）",
+        "你输入的一行文字（一句话）",
+        "磁盘上干活的文件（如 git.exe）",
+        "操作系统内核"
+      ],
+      explain: `五个词一条链：<strong>格子（window/tab/pane）住住客（process），住客是 program 跑起来的样子；你把 command（文字）交给 shell，shell 叫 program 干活。</strong>注意干扰项「操作系统内核」——以上五位都不是内核，它们都生活在上层。`,
+      hints: [
+        "先分两大类：哪些是「格子」，哪些是「活物/文字」？",
+        "program 和 process 是同一个东西的两种状态：睡着 vs 醒着",
+        "Answer: 容器=Window/Tab/Pane，Shell=解释器，Process=跑起来的程序，Command=文字，Program=文件"
+      ],
+      key: "格子住住客，住客跑程序，程序听命令，命令经翻译。<strong>五个词一条链。</strong>"
+    },
+    { type: "predict",
+      title: "Scenario：谁在第一个收到我的按键？",
+      scenario: `你在 VS Code 底部的 terminal 里键入 <span class="term-inline">g</span>，字母立刻出现在屏幕上。<strong>这个字母第一个到达谁手里？</strong>`,
+      options: [
+        { t: "VS Code 的 terminal 组件（它先把按键画在屏幕上，暂存这一行）", ok: true },
+        { t: "PowerShell（从按下第一个字母起就在解析）", ok: false, why: "解析发生在你按 Enter 之后；打字期间 PowerShell 只是收到了 echo，还没「看」这行字。" },
+        { t: "Windows 操作系统", ok: false, why: "OS 负责把键盘事件送给窗口程序，但它不理解这一行将成为命令。" },
+        { t: "git.exe", ok: false, why: "git 此时根本还没被叫到——它要等 shell 解析完才知道有人找它。" }
+      ],
+      explain: `答案 A。打字阶段，terminal 组件只做两件事：把字符 echo 到屏幕、攒成一行。直到 Enter，这行才被打包送给 shell。<strong>这就是为什么你打错字可以随便退格——在 Enter 之前，命令还不「存在」。</strong>`,
+      hints: [
+        "打错字能退格修改——说明 Enter 之前谁还没有看到它？",
+        "回想上一条概念图：Enter 是「转交」的信号",
+        "Answer: VS Code 的 terminal 组件"
+      ]
+    },
+    { type: "multiselect",
+      title: "Concept Recognition：哪些是「容器」？",
+      scenario: `下面哪些属于「容器」（只提供空间、本身不运行任何东西）？（选出所有）`,
+      options: [
+        { t: "Terminal window", ok: true },
+        { t: "Tab", ok: true },
+        { t: "Pane", ok: true },
+        { t: "Shell", ok: false, why: "Shell 是程序——它在运行、在干活，不是格子。" },
+        { t: "Process", ok: false, why: "Process 是运行本身，最「活」的概念。" }
+      ],
+      explain: `前三者全是格子。判断口诀：<strong>「这东西删掉之后，命令会停止运行吗？」会 → 它是参与者；不会（只是换个地方显示）→ 它是容器。</strong>关掉 window，shell 进程就死了——window 是 shell 的容器和 lifeline。`,
+      hints: [
+        "用口诀问自己：删掉它，命令还跑吗？",
+        "Shell 和 Process 都是「在跑的东西」",
+        "Answer: Window / Tab / Pane"
+      ],
+      key: "Window/Tab/Pane = 格子；Shell/Process = 住客。<strong>格子没了，住客也活不成。</strong>"
+    },
+    { type: "fill",
+      title: "Fill in：Tab 还是 Pane？",
+      scenario: `你在一个 tab 里运行 PowerShell，然后把这个 tab <strong>横向 split</strong>，左右各出现一个 PowerShell。右边那个是一个新的 ______（一个词：tab 还是 pane？）`,
+      before: ``,
+      after: ``,
+      answer: ["pane"],
+      explain: `Split 出来的是 <strong>pane</strong>（分栏）：同一个 tab 被切成多个格子，每格一个 shell。tab 是「标签页」，pane 是「标签页里的分栏」。格子的层级：window ⊃ tab ⊃ pane。`,
+      hints: [
+        "Split 是在现有 tab「内部」切，还是新开一个标签？",
+        "pane = 窗格，tab = 标签页",
+        "Answer: pane"
+      ],
+      key: "Window ⊃ Tab ⊃ Pane：split 切出来的一定是 pane。"
+    },
+    { type: "concept",
+      title: "PowerShell / CMD / Bash：三兄弟对比卡",
+      body: `
+        <p>三种 shell 一张卡带走。先看共同身份：都是 shell——都干「读命令、找程序、回显结果」的活。</p>
+        <ul>
+          <li><strong>CMD</strong>（cmd.exe）：Windows 自带老牌 shell，DOS 时代遗产。提示符 <span class="term-inline">C:\&gt;</span>。内置命令少，语法古老，但每台 Windows 都有。</li>
+          <li><strong>PowerShell</strong>：Windows 现代 shell（也是跨平台开源的）。提示符 <span class="term-inline">PS C:\&gt;</span>。Cmdlet 是 <span class="term-inline">Verb-Noun</span> 风格（Get-Location、Set-Location），管道传对象而不仅是文字。</li>
+          <li><strong>Bash</strong>：Unix/Linux 世界的标准 shell，提示符 <span class="term-inline">$</span>。经 Git Bash / WSL 来到 Windows。生态最大：网上的命令行教程 80% 默认 Bash 语法。</li>
+        </ul>
+        <p>关键视角：<strong>你在网上搜到一条命令跑不通时，第一问不是「命令错了」，而是「它写给哪个 shell 的」。</strong></p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="180" viewBox="0 0 660 180">
+          <rect x="10"  y="14" width="206" height="140" rx="10" fill="#161b22" stroke="#9aa7b4"/>
+          <text x="113" y="38" fill="#9aa7b4" font-size="13" text-anchor="middle" font-weight="bold">CMD</text>
+          <text x="113" y="60" fill="#e6edf3" font-size="10" text-anchor="middle" font-family="Consolas,monospace">C:\Users\YOGA&gt;</text>
+          <text x="113" y="84" fill="#9aa7b4" font-size="10" text-anchor="middle">Windows 自带 · 最老</text>
+          <text x="113" y="100" fill="#9aa7b4" font-size="10" text-anchor="middle">内置命令少</text>
+          <text x="113" y="124" fill="#9aa7b4" font-size="10" text-anchor="middle">遗产：bat 脚本</text>
+          <rect x="227" y="14" width="206" height="140" rx="10" fill="#161b22" stroke="#58a6ff"/>
+          <text x="330" y="38" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">PowerShell</text>
+          <text x="330" y="60" fill="#a5d6ff" font-size="10" text-anchor="middle" font-family="Consolas,monospace">PS C:\Users\YOGA&gt;</text>
+          <text x="330" y="84" fill="#9aa7b4" font-size="10" text-anchor="middle">Windows 现代 · 跨平台</text>
+          <text x="330" y="100" fill="#9aa7b4" font-size="10" text-anchor="middle">Verb-Noun：Get-ChildItem</text>
+          <text x="330" y="124" fill="#9aa7b4" font-size="10" text-anchor="middle">管道传对象</text>
+          <rect x="444" y="14" width="206" height="140" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="547" y="38" fill="#d29922" font-size="13" text-anchor="middle" font-weight="bold">Bash</text>
+          <text x="547" y="60" fill="#e6edf3" font-size="10" text-anchor="middle" font-family="Consolas,monospace">YOGA@PC:~$</text>
+          <text x="547" y="84" fill="#9aa7b4" font-size="10" text-anchor="middle">Linux/Unix 世界标准</text>
+          <text x="547" y="100" fill="#9aa7b4" font-size="10" text-anchor="middle">网上教程默认语法</text>
+          <text x="547" y="124" fill="#9aa7b4" font-size="10" text-anchor="middle">经 Git Bash / WSL 上 Windows</text>
+          <text x="330" y="172" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">都是 shell。口音不同、词汇不同、内置命令不同。</text>
+        </svg>
+        <div class="cap">认人看提示符：无 PS 前缀 = CMD；PS 前缀 = PowerShell；$ 结尾 = Bash 家族。</div>
+        </div>`,
+      key: "<strong>CMD 老、PowerShell 新（Windows）、Bash 大（Linux 世界）。</strong>命令跑不通先问：它写给哪个 shell？"
+    },
+    { type: "multiselect",
+      title: "Compare：PowerShell 与 CMD",
+      scenario: `关于 PowerShell 和 CMD，下面哪些说法是正确的？（选出所有）`,
+      options: [
+        { t: "两者都是 shell", ok: true },
+        { t: "两者都随 Windows 提供", ok: true },
+        { t: "两者的提示符完全相同", ok: false, why: "PowerShell 有 PS 前缀，CMD 没有——这是最显眼的区别。" },
+        { t: "两者的命令集完全一致", ok: false, why: "CMD 的 dir 在 PowerShell 是别名；很多 PowerShell Cmdlet 在 CMD 里根本不存在。" },
+        { t: "PowerShell 的 Cmdlet 是 Verb-Noun 风格", ok: true }
+      ],
+      explain: `PowerShell 和 CMD 是同一屋檐下的两代 shell：<strong>都在 Windows 上、都是 shell、都活着；但词汇不同、年龄不同、能力不同。</strong>「提示符 PS 前缀」和「Verb-Noun」是 PowerShell 的两张身份证。`,
+      hints: [
+        "三个正确两个错误。错误都藏在「完全」这个词里",
+        "「完全相同」「完全一致」——绝对化的说法要警惕",
+        "Answer: 都是 shell / 随 Windows 提供 / Verb-Noun 风格"
+      ]
+    },
+    { type: "predict",
+      title: "Scenario：「我打开 Windows Terminal，然后看到 PowerShell」",
+      scenario: `新手说：「我打开了 PowerShell。」你看到他屏幕上的窗口标题栏写着 <span class="term-inline">Windows Terminal</span>，提示符是 <span class="term-inline">PS C:\Users\YOGA&gt;</span>。<strong>最准确的说法是：</strong>`,
+      options: [
+        { t: "他正在 Windows Terminal（app）里运行 PowerShell（shell）——app 是容器，PowerShell 是住客", ok: true },
+        { t: "他打开了 PowerShell，所以窗口就是 PowerShell 的一部分", ok: false, why: "PowerShell 是个程序，不长窗口；窗口是 Windows Terminal 这个 app 的。" },
+        { t: "Windows Terminal 和 PowerShell 是同一个东西的两个名字", ok: false, why: "一个是 app（容器），一个是 shell（程序）——层级不同。" },
+        { t: "他实际上在用 CMD，因为标题栏不是 PowerShell", ok: false, why: "PS 前缀恰恰证明里面住的是 PowerShell。" }
+      ],
+      explain: `答案 A。这句话的日常版和精确版：日常说「打开 PowerShell」没问题；精确版是「在 Windows Terminal 这个 app 里开了一个运行 PowerShell 的 tab」。<strong>标题栏 = app 的名字；提示符 = shell 的名字。</strong>看窗认人，两处都要看。`,
+      hints: [
+        "标题栏和提示符各透露了谁的身份？",
+        "两个名字 = 两个层级：app 层和 shell 层",
+        "Answer: Windows Terminal（app）里运行 PowerShell（shell）"
+      ]
+    },
+    { type: "fill",
+      title: "Fill in：看提示符认人",
+      scenario: `你面前的窗口提示符是 <span class="term-inline">C:\Users\YOGA&gt;</span>——<strong>没有 PS 前缀</strong>。你面对的 shell 是 ______（小写，三个字母）：`,
+      before: `PS? 没有前缀 &gt; 这是 `,
+      after: ` `,
+      answer: ["cmd"],
+      explain: `无 PS 前缀的裸路径提示符 = CMD（或兼容模式）。PS 前缀 = PowerShell；$ 结尾 = Bash 家族。提示符是 shell 的口音——听口音认人。`,
+      hints: [
+        "回想对比卡：谁的提示符是光秃秃的 C:\\>？",
+        "PowerShell 有 PS 前缀；Bash 是 $ 结尾",
+        "Answer: cmd"
+      ]
+    },
+    { type: "concept",
+      title: "Unix / Linux / Bash：一分钟家族速览",
+      body: `
+        <p>8.0 已经铺开讲过这层关系，这里浓缩成「比较卡 + 四条 NOT」：</p>
+        <ul>
+          <li><strong>Unix</strong>：70 年代商业 OS，思想源头（不是开源的）。</li>
+          <li><strong>Linux</strong>：91 年起的开源 OS，「类 Unix」但不是 Unix。</li>
+          <li><strong>Bash</strong>：一个 shell，最常搭配 Linux，也移植到了 Windows（Git Bash）。</li>
+          <li><strong>Git Bash</strong>：Windows 上的 Bash 环境——Bash 的「Windows 分号」。</li>
+        </ul>
+        <p>四条 NOT：<span class="term-inline">Bash ≠ Linux</span>（shell 不是系统）；<span class="term-inline">Git Bash ≠ Git</span>（环境不是工具）；<span class="term-inline">Git Bash ≠ Linux</span>（只是 Bash 移植，内核还是 Windows）；<span class="term-inline">Linux ≠ Unix</span>（只是传统相承）。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="150" viewBox="0 0 620 150">
+          <rect x="20" y="30" width="130" height="70" rx="10" fill="#161b22" stroke="#2d333f"/>
+          <text x="85" y="58" fill="#e6edf3" font-size="12" text-anchor="middle" font-weight="bold">OS 层</text>
+          <text x="85" y="78" fill="#9aa7b4" font-size="10" text-anchor="middle">Unix · Linux · Ubuntu</text>
+          <rect x="190" y="30" width="130" height="70" rx="10" fill="#161b22" stroke="#d29922"/>
+          <text x="255" y="58" fill="#d29922" font-size="12" text-anchor="middle" font-weight="bold">Shell 层</text>
+          <text x="255" y="78" fill="#9aa7b4" font-size="10" text-anchor="middle">Bash · PowerShell · CMD</text>
+          <rect x="360" y="30" width="110" height="70" rx="10" fill="#161b22" stroke="#3fb950"/>
+          <text x="415" y="58" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">程序层</text>
+          <text x="415" y="78" fill="#9aa7b4" font-size="10" text-anchor="middle">git · python …</text>
+          <rect x="510" y="30" height="0" width="0" fill="none"/>
+          <text x="530" y="58" fill="#9aa7b4" font-size="10" text-anchor="middle">GitHub =</text>
+          <text x="530" y="74" fill="#9aa7b4" font-size="10" text-anchor="middle">远端网站</text>
+          <text x="310" y="128" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">分层看：OS ≠ Shell ≠ 程序 ≠ 网站。跨层等于号是万恶之源。</text>
+        </svg>
+        <div class="cap">把每个新名词放进正确的层，混淆就消失了大半。</div>
+        </div>`,
+      key: "<strong>分层命名法：</strong>听到任何新名词，先问它属于哪一层（OS / shell / 程序 / 网站 / 容器）。"
+    },
+    { type: "multiselect",
+      title: "Compare：哪些是「系统层」？",
+      scenario: `按上一张分层图：下面哪些属于 <strong>OS / 系统层</strong>？（选出所有）`,
+      options: [
+        { t: "Unix", ok: true },
+        { t: "Linux", ok: true },
+        { t: "Ubuntu", ok: true },
+        { t: "Bash", ok: false, why: "Bash 是 shell 层——解释命令的程序。" },
+        { t: "Git Bash", ok: false, why: "Git Bash 是 Windows 上的一套环境，核心是 Bash（shell 层）。" },
+        { t: "WSL", ok: false, why: "WSL 是 Windows 里跑 Linux 的机制——比 OS 更底层或并列，但不是「一个系统」本身。" }
+      ],
+      explain: `前三个是系统（Ubuntu 是 Linux 的一个<strong>发行版</strong>，也算系统层）。后三个常被误认为系统：Bash 和 Git Bash 是 shell 层，WSL 是「请 Linux 入住 Windows」的机制。这道题的价值不在答案，在于<strong>你脑中能立刻把它们分层</strong>。`,
+      hints: [
+        "问：这东西能自己管理硬件和进程吗？能 → 系统层",
+        "WSL  tricky：它是机制不是住户，更不是系统本身",
+        "Answer: Unix / Linux / Ubuntu"
+      ]
+    },
+    { type: "predict",
+      title: "Scenario：Git Bash 里 ls 成功了，说明什么？",
+      scenario: `你在 Git Bash 里输入 <span class="term-inline">ls</span>，列出了文件列表。<strong>这个事实能说明什么？</strong>`,
+      options: [
+        { t: "有一个 Bash 风格的 shell 正在解释我的命令", ok: true },
+        { t: "我正在使用 Git", ok: false, why: "ls 是 shell 的内置命令，和 git 无关。" },
+        { t: "我的电脑变成了 Linux", ok: false, why: "Git Bash 只是 Bash 移植，内核还是 Windows。" },
+        { t: "我已经连接到 GitHub", ok: false, why: "完全本地的事，一行命令都没联网。" }
+      ],
+      explain: `答案 A——而且只能推出 A。一条命令的成功只能告诉你「当前 shell 支持它」。从 ls 推出「在用 Git / 在 Linux / 连了 GitHub」都是跨层脑补。<strong>观察要克制：事实止于证据。</strong>`,
+      hints: [
+        "ls 是谁的内置命令？（shell 的）",
+        "四个选项里只有一个停留在「证据之内」",
+        "Answer: 有一个 Bash 风格的 shell 在解释命令"
+      ]
+    },
+    { type: "matching",
+      title: "Relationship：名词↔层级",
+      scenario: `把每个名词放进正确的层级：`,
+      pairs: [
+        { l: "Linux", r: "操作系统（OS 层）" },
+        { l: "Bash", r: "Shell（解释命令的程序）" },
+        { l: "git", r: "程序（干活的工具）" },
+        { l: "GitHub", r: "网站（托管仓库的平台）" },
+        { l: "WSL", r: "机制（让 Linux 住进 Windows）" },
+        { l: "Ubuntu", r: "Linux 发行版" }
+      ],
+      choices: [
+        "操作系统（OS 层）",
+        "Shell（解释命令的程序）",
+        "程序（干活的工具）",
+        "网站（托管仓库的平台）",
+        "机制（让 Linux 住进 Windows）",
+        "Linux 发行版",
+        "终端应用（窗口容器）"
+      ],
+      explain: `六个词六个坑：它们经常在同一句话里出现，但分布在六个不同位置。这张表背下来，读任何教程的开篇都会快三倍。`,
+      hints: [
+        "先找出唯一的「网站」和唯一的「机制」",
+        "WSL 不是住户是房子；Ubuntu 是住户",
+        "Answer: Linux=OS，Bash=Shell，git=程序，GitHub=网站，WSL=机制，Ubuntu=发行版"
+      ],
+      key: "<strong>分层命名法实战：</strong>六个名词，六个位置，无一重复。"
+    },
+    { type: "multiselect",
+      title: "Relationship：Git 的正确打开方式",
+      scenario: `关于 Git，下面哪些说法是正确的？（选出所有）`,
+      options: [
+        { t: "git 是一个安装在我电脑上的程序", ok: true },
+        { t: "git 可以在 PowerShell 里运行，不限于 Git Bash", ok: true },
+        { t: "git 只能在 Git Bash 里运行", ok: false, why: "git.exe 在 PATH 里，任何 shell 都找得到它——PowerShell、CMD 都行。" },
+        { t: "GitHub 是 git 的官方网站，必须装了 git 才能浏览 GitHub", ok: false, why: "浏览 GitHub 只要浏览器；git 是和 GitHub 对话的本地工具，不是入场券。" },
+        { t: "Git Bash 里自带 git，是因为 Git for Windows 把它俩打包发行", ok: true }
+      ],
+      explain: `git 是<strong>本地的、shell 无关的、独立的</strong>程序；GitHub 是<strong>远端的</strong>平台；Git Bash 只是「顺路带货」的 Bash 环境。三个正确选项拼起来就是 git 的完整画像。`,
+      hints: [
+        "两条和「限定词」有关（只能 / 必须）——警惕绝对化",
+        "想想 PATH：git.exe 在哪里，谁就找得到它",
+        "Answer: 本地程序 / 可在 PowerShell 运行 / Git for Windows 打包发行"
+      ]
+    },
+    { type: "concept",
+      title: "Git / Git Bash / GitHub：三问模板",
+      body: `
+        <p>遇到任何容易混淆的名词组合，用同一个三问模板拆它：</p>
+        <ol>
+          <li><strong>What is it?（它是什么？）</strong>——git：版本控制程序；Git Bash：Windows 上的 Bash 环境；GitHub：托管 git 仓库的网站。</li>
+          <li><strong>What is it NOT?（它不是什么？）</strong>——git 不是 GitHub；Git Bash 不是 git；GitHub 不是程序。</li>
+          <li><strong>How does it connect?（它怎么连上其他词？）</strong>——git 住在 Git Bash（也住在任何 shell）的 PATH 里；git 可以 push 到 GitHub；GitHub 上存的是 git 管理的仓库。</li>
+        </ol>
+        <p>这套三问不只对 Git 有效——WSL/Ubuntu、Terminal/Shell、Command/Program 全都适用。<strong>它就是你以后拆新概念的瑞士军刀。</strong></p>`,
+      key: "<strong>三问模板：是什么、不是什么、怎么相连。</strong>新概念三问打底，再谈细节。"
+    },
+    { type: "predict",
+      title: "Scenario：git --version 打印出版本号",
+      scenario: `你在 Git Bash 里输入 <span class="term-inline">git --version</span>，屏幕显示 <span class="term-inline">git version 2.47.1</span>。<strong>按 Enter 后发生链条的哪一环，让这行字出现的？</strong>`,
+      options: [
+        { t: "Shell 在 PATH 清单里找到 git.exe，OS 创建进程运行它，它打印版本号给 shell 显示", ok: true },
+        { t: "GitHub 服务器返回了版本号", ok: false, why: "全程本地——GitHub 服务器没有被触碰。" },
+        { t: "Git Bash 自己记住了这个版本号", ok: false, why: "Git Bash 是环境不是数据库；版本号是 git.exe 此刻运行打印的。" },
+        { t: "Windows 注册表里存的版本号", ok: false, why: "不查注册表——是程序运行的输出。" }
+      ],
+      explain: `答案 A——就是 8.0 的六环链条原样跑了一遍。版本号之所以可信，正因为它是「程序此刻运行说出来的」，而不是从哪里「查」出来的。<strong>同一条链条，解释无数条命令。</strong>`,
+      hints: [
+        "回想六环：解析 → 查找 → 进程 → 输出 → 显示",
+        "这条命令联网了吗？（没有）",
+        "Answer: Shell 找 git.exe → OS 建进程 → 程序打印"
+      ]
+    },
+    { type: "multiselect",
+      title: "What is it NOT：Git 版",
+      scenario: `关于 Git / Git Bash / GitHub，下面哪些说法是<strong>错误</strong>的？（选出所有错误项）`,
+      options: [
+        { t: "“GitHub 是一个运行在我电脑上的程序。”", ok: false, why: "GitHub 是远端网站；你电脑上运行的是 git。" },
+        { t: "“Git Bash 就是 Git。”", ok: false, why: "Git Bash 是环境；git 是住在里面的程序之一。" },
+        { t: "“git 是一个版本控制程序。”", ok: true },
+        { t: "“GitHub 上托管的是 git 仓库（repository）。”", ok: true },
+        { t: "“没有 Git Bash 就不能用 git。”", ok: false, why: "任何 shell（PowerShell / CMD）都能运行 git，只要有 git.exe。" }
+      ],
+      explain: `错误的三句有个共同点：<strong>把「环境 / 远端」和「本地程序」搅在一起</strong>。GitHub 在云端，git 在本地，Git Bash 只是个可选环境。三者连线清晰：git（本地）⇄ GitHub（远端），Git Bash（旁观的载体）。`,
+      hints: [
+        "三错两对。对的两个是在下定义，错的三个是在乱连线",
+        "注意那句「没有……就不能……」——绝对化",
+        "Answer: 错误的是第 1、2、5 句"
+      ]
+    },
+    { type: "fill",
+      title: "Fill in：谁托管仓库？",
+      scenario: `你在本地用 git 管理代码，想把它发布到一个在线平台上给别人看、协作。这个平台叫 ______（一个单词）：`,
+      before: ``,
+      after: ``,
+      answer: ["github", "GitHub"],
+      explain: `<strong>GitHub = 托管 git 仓库的在线平台。</strong>记住这个分工：git 管「历史」，GitHub 管「远方」。以后还会遇到 GitLab、Gitee——都是同类平台，只是房东不同。`,
+      hints: [
+        "git 是工具；这个是网站",
+        "名字 = Git + Hub（枢纽）",
+        "Answer: GitHub"
+      ]
+    },
+    { type: "concept",
+      title: "Permissions 浓缩版：三个词 + 一条原则",
+      body: `
+        <p>8.0 详解过的权限概念，这里浓缩成可携带版：</p>
+        <ul>
+          <li><strong>Permission（许可）</strong>：对具体资源的允许/拒绝——「能不能写 C:\Windows」。</li>
+          <li><strong>Privilege（特权档位）</strong>：账户的整体权限级别——standard user 或 Administrator。</li>
+          <li><strong>Elevation（提权）</strong>：临时升档的动作——「以管理员身份运行」，UAC 弹窗就是门禁。</li>
+        </ul>
+        <p>一条原则：<strong>least privilege（最小权限）</strong>——平时待在普通权限，确认必要才提权。理由：Admin 窗口里一次手滑的破坏没有门禁可拦。</p>
+        <p>看到 <span class="term-inline">Access denied</span> 时的正确心态：不是「出 bug 了」，而是先问——<strong>这个操作需要更高权限，还是根本就不该做？</strong></p>`,
+      key: "<strong>许可对资源，特权对账户，提权对动作；平时最小权限。</strong>"
+    },
+    { type: "predict",
+      title: "Scenario：同样的命令，两种命运",
+      scenario: `同一条命令，在普通终端报错 <span class="term-inline">Access denied</span>，在 Administrator 终端成功执行。<strong>两次执行到底差在哪？</strong>`,
+      options: [
+        { t: "两个 shell 进程的权限令牌（access token）不同——OS 的门禁对管理员放行", ok: true },
+        { t: "Administrator 终端的键盘更快", ok: false, why: "和输入设备无关。" },
+        { t: "命令在普通终端被拼错了", ok: false, why: "同一命令同一拼写——denied 是 OS 的回复，不是 shell 的。" },
+        { t: "普通终端没联网", ok: false, why: "Access denied 是本地权限检查的结果。" }
+      ],
+      explain: `答案 A。命令、shell、电脑全都相同，唯一变量是<strong>进程出生时的权限令牌</strong>。OS 每次执行敏感操作前都会亮令牌——这就是「同一个世界，两种待遇」的机制。`,
+      hints: [
+        "回想 Level 7：每个进程出生领一份副本——令牌也是出生发的",
+        "两个窗口唯一不同的是「谁批准出生的」",
+        "Answer: 进程的权限令牌不同"
+      ]
+    },
+    { type: "multiselect",
+      title: "Mental Model：Least Privilege",
+      scenario: `关于最小权限原则（least privilege），下面哪些说法是正确的？（选出所有）`,
+      options: [
+        { t: "日常使用普通权限就够了，没必要开管理员终端", ok: true },
+        { t: "Access denied 常常是保护机制在履职，不一定是坏事", ok: true },
+        { t: "管理员什么都能做，所以干脆永远用管理员", ok: false, why: "「什么都能做」恰恰是危险——手滑和恶意软件都没有门禁可拦。" },
+        { t: "提权之前应该先确认这个操作确实需要", ok: true }
+      ],
+      explain: `最小权限不是「能力差」，是<strong>破坏半径小</strong>：普通权限下，最坏情况被门禁拦下；管理员权限下，最坏情况没有「最坏」——已经到底了。`,
+      hints: [
+        "从「最坏情况」的角度想每个选项",
+        "有一句的「所以」后面是灾难",
+        "Answer: 前三个里去掉第三句——即 1、2、4"
+      ],
+      key: "普通权限 = 自带安全气囊；管理员 = 拆掉了所有气囊的超跑。"
+    },
+    { type: "predict",
+      title: "Scenario：UAC 弹窗是什么？",
+      scenario: `你右键一个程序选「以管理员身份运行」，屏幕变暗弹出一个确认框（UAC）。<strong>这个弹窗在系统里扮演什么角色？</strong>`,
+      options: [
+        { t: "Elevation 的门禁：OS 在向你确认「真的要升档吗」", ok: true },
+        { t: "杀毒软件在扫描文件", ok: false, why: "UAC 是 Windows 自己的机制，不是杀毒软件。" },
+        { t: "程序崩溃了在请求重启", ok: false, why: "弹窗出现在程序真正运行之前——是批准环节。" },
+        { t: "网络防火墙在拦截", ok: false, why: "和联网无关。" }
+      ],
+      explain: `答案 A。UAC（User Account Control）是提权的「确认键」：你点「是」，OS 才发管理员令牌给新进程。它是 least privilege 的<strong>制度保障</strong>——升档必须过一次人工确认。`,
+      hints: [
+        "弹窗出现在什么时候？（程序运行之前）",
+        "它在问你什么？（同不同意）",
+        "Answer: 提权（elevation）的门禁"
+      ]
+    },
+    { type: "concept",
+      title: "最终链条：从手指到文件",
+      body: `
+        <p>Level 8.1 的全部内容收束成一条链。任何一次命令行操作，都是这条链在跑：</p>
+        <p style="text-align:center;font-family:var(--mono);color:#a5d6ff;line-height:2">User（你）<br>↓<br>GUI / Terminal（表达：点击或打字）<br>↓<br>Shell（翻译：解析 command）<br>↓<br>Command → Program / OS operation（谁去干活）<br>↓<br>Files / Processes / Resources（最终结果）</p>
+        <p>拿着这条链，你能回答那三个经典问题：<strong>我现在在哪里？（cwd）我正在使用什么？（容器+shell）谁在解释我的命令？（shell）这个命令最终让谁执行？（program 或 OS）</strong></p>`,
+      key: "User → GUI/Terminal → Shell → Command → Program/OS → Files/Processes。<strong>六环链，一切命令行操作的底层剧本。</strong>"
+    },
+    { type: "multiselect",
+      title: "Mental Model：读窗口，能确认什么？",
+      scenario: `你面前有一个终端窗口，提示符 <span class="term-inline">PS C:\Users\YOGA&gt;</span>，独立窗口。基于<strong>仅有的事实</strong>，你能确认的是哪些？（选出所有「能确认」的）`,
+      options: [
+        { t: "shell 是 PowerShell（或兼容 PS 提示符的东西）", ok: true },
+        { t: "当前工作目录是 C:\Users\YOGA", ok: true },
+        { t: "这是管理员终端", ok: false, why: "没有 Administrator 字样就不能下结论——提示符只报位置和 shell。" },
+        { t: "git 一定安装在这台电脑上", ok: false, why: "提示符对 PATH 里的程序一无所知。用 git --version 验证，别猜。" },
+        { t: "这是一个独立 app 的窗口（而非嵌在某个编辑器里）", ok: true }
+      ],
+      explain: `能确认的两条都是<strong>提示符亲自说出来的</strong>（shell 口音 + cwd）；不能确认的两条都是<strong>提示符没说、需要额外证据的</strong>（权限看标题栏，程序看 where）。这个「证据边界」意识，是排查问题的第一课。`,
+      hints: [
+        "把每个选项和「提示符能提供的信息」对表",
+        "权限要看标题栏 Administrator 字样；程序要用 where/git --version 验证",
+        "Answer: 能确认的是前两条（和独立窗口这一条）"
+      ],
+      key: "<strong>证据边界：提示符只报 shell 和位置；其余都要另找证据。</strong>"
+    },
+    { type: "predict",
+      title: "Scenario 综合：三连问实战",
+      scenario: `你在 VS Code 底部终端看到提示符 <span class="term-inline">YOGA@DESKTOP MINGW64 ~/playground $</span>。问：我现在在哪里？正在使用什么？谁在解释我的命令？`,
+      options: [
+        { t: "在 ~/playground（家目录下的 playground）；用的是 VS Code 的 integrated terminal 里运行的 Git Bash（MINGW64）；解释命令的是 Bash", ok: true },
+        { t: "在 GitHub 的 playround 仓库；用的是 Git；解释命令的是 VS Code", ok: false, why: "MINGW64 提示符说明本地 Bash——和 GitHub、VS Code 本体都无关。" },
+        { t: "在 Linux 系统的 playground；用的是 Ubuntu；解释命令的是 Linux", ok: false, why: "MINGW64 是 Git Bash 的标记，不是 WSL/Ubuntu。" },
+        { t: "在 CMD 里；用的是 Windows；解释命令的是命令提示符", ok: false, why: "$ 结尾 + MINGW64 是 Bash 家族口音，CMD 是 C:\\>。" }
+      ],
+      explain: `三连问满分：位置看 <span class="term-inline">~/playground</span>（~ 是 Bash 的家目录写法）；容器看窗口位置（VS Code 底部）；shell 看口音（MINGW64 = Git Bash）。三个证据，三个答案，无一靠猜。`,
+      hints: [
+        "三个证据：~/playground / 编辑器底部 / MINGW64 $",
+        "分别回答位置、容器、shell",
+        "Answer: 家目录下的 playground · VS Code 内置终端 · Git Bash 的 Bash"
+      ]
+    },
+    { type: "ordering",
+      title: "Mental Model：六环链排序",
+      scenario: `把下面六个环节按真实顺序排列（从你到结果）：`,
+      items: [
+        { id: "prog", t: "Program / OS operation 干活（或 OS 直接执行）" },
+        { id: "user", t: "User 产生意图（我要移动这个文件）" },
+        { id: "shell", t: "Shell 解析 command（拆词、找程序）" },
+        { id: "file", t: "Files / Processes / Resources 发生改变" },
+        { id: "iface", t: "GUI / Terminal 接收表达（点击或输入文字）" },
+        { id: "cmd", t: "Command 形成（一行文字或一次点击的指令）" }
+      ],
+      order: ["user", "iface", "cmd", "shell", "prog", "file"],
+      explain: `完整剧本：<strong>意图 → 表达（GUI/Terminal）→ 指令（command）→ 翻译（shell）→ 执行（program/OS）→ 结果（files/processes）。</strong>六环不增不减——以后遇到任何命令行现象，先定位它发生在哪一环。`,
+      hints: [
+        "从「谁最先动」开始，到「什么最后变」结束",
+        "command 先于 shell：先有话，才有翻译",
+        "Answer: 意图 → 表达 → 指令 → 翻译 → 执行 → 结果"
+      ]
+    },
+    { type: "fill",
+      title: "Fill in：毕业填空",
+      scenario: `一句话毕业：<strong>解释我命令的永远是 ______</strong>；窗口只负责转交和显示。（一个词）：`,
+      before: ``,
+      after: ``,
+      answer: ["shell"],
+      explain: `Shell。无论容器是 Windows Terminal 还是 VS Code 底部、无论提示符长什么样，<strong>翻译命令的永远是 shell</strong>。Level 8.1 到此毕业——下一关（8.2）学「怎么对 shell 说话」：命令这门语言的语法。`,
+      hints: [
+        "窗口转交、谁翻译？",
+        "PowerShell / CMD / Bash 的共同身份",
+        "Answer: shell"
+      ]
+    }
+  ]
+}
+,
+{
+  id: "8.2",
+  module: "02 · Command Line ⭐",
+  title: "Command Line as a Language",
+  en: "Command Line as a Language",
+  summary: "回答「How do I speak to it?」：命令是语言不是魔法——单词（pwd/ls/cd/mkdir/cp/mv/rm/cat）有含义和来源（诚实词源，不编造）；句子有语法（program → subcommand → option → argument）；code . 为什么能工作（Terminal 启动 GUI program）；在模拟器里亲手敲命令、体验错误并诊断。",
+  steps: [
+    { type: "concept",
+      title: "命令是语言，不是魔法咒语",
+      body: `
+        <p>从这一关开始，换个视角看命令：<strong>它是一门语言</strong>。每个命令是一个「单词」，每次输入是一句「句子」。</p>
+        <ul>
+          <li><span class="term-inline">pwd</span> = print working directory（打印我在哪）——一个单词就问路</li>
+          <li><span class="term-inline">cd Documents</span> = change directory + 去哪——单词加宾语</li>
+          <li><span class="term-inline">mkdir test</span> = make directory + 造什么——造一个新文件夹</li>
+          <li><span class="term-inline">cp a.txt b.txt</span> = copy + 从哪 + 到哪</li>
+        </ul>
+        <p>Shell 收到一句话后发生的事你已经知道（8.0 六环）：拆成单词 → 第一个单词是要运行的程序 → 后面的单词是交给它的内容。<strong>学命令行 = 学这门语言的词汇和句法。</strong>词汇靠积累，句法现在学。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="160" viewBox="0 0 640 160">
+          <rect x="20" y="30" width="290" height="90" rx="12" fill="#161b22" stroke="#2d333f"/>
+          <text x="165" y="56" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="bold">自然语言</text>
+          <text x="165" y="80" fill="#9aa7b4" font-size="11" text-anchor="middle">动词 + 宾语：把 苹果 放进 篮子</text>
+          <text x="165" y="100" fill="#9aa7b4" font-size="11" text-anchor="middle">（谁都能看懂意图）</text>
+          <rect x="330" y="30" width="290" height="90" rx="12" fill="#161b22" stroke="#58a6ff"/>
+          <text x="475" y="56" fill="#58a6ff" font-size="13" text-anchor="middle" font-weight="bold">命令行语言</text>
+          <text x="475" y="80" fill="#a5d6ff" font-size="12" text-anchor="middle" font-family="Consolas,monospace">cp 苹果.txt 篮子\\</text>
+          <text x="475" y="100" fill="#9aa7b4" font-size="11" text-anchor="middle">（程序 + 参数：谁 干什么 对谁）</text>
+          <text x="320" y="145" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="bold">结构同构：第一个词是动词（程序），后面是宾语（参数）</text>
+        </svg>
+        <div class="cap">把命令当语言读，而不是当咒语背。</div>
+        </div>`,
+      key: "<strong>命令 = 语言：词汇（命令名）+ 句法（结构）。</strong>背十个句子不如学一句法。"
+    },
+    { type: "concept",
+      title: "词源表：命令的「字面意思」（诚实版）",
+      body: `
+        <p>很多命令名是英文单词或缩写——知道字面意思能大幅减轻记忆负担。但要立一条规矩：<strong>词源帮助记忆，不当考据较真；有争议的明确标注，绝不编造。</strong></p>
+        <table class="cmd-table" style="margin-top:10px">
+          <tr><th>命令</th><th>含义</th><th>说明</th></tr>
+          <tr><td>cd</td><td>change directory</td><td>换目录——最直白的缩写</td></tr>
+          <tr><td>pwd</td><td>print working directory</td><td>打印当前目录</td></tr>
+          <tr><td>mkdir</td><td>make directory</td><td>造文件夹</td></tr>
+          <tr><td>ls</td><td>list</td><td>列目录；DOS/Windows 的对应词是 dir</td></tr>
+          <tr><td>cp</td><td>copy</td><td>复制</td></tr>
+          <tr><td>mv</td><td>move</td><td>移动/改名</td></tr>
+          <tr><td>rm</td><td>remove</td><td>删除</td></tr>
+          <tr><td>cat</td><td>concatenate</td><td>连接（原意是把多个文件连成一片输出；现在常用来「看文件」）</td></tr>
+          <tr><td>touch</td><td>触碰</td><td>本义是「碰一下文件」：不存在就创建空的，存在就刷新时间戳</td></tr>
+          <tr><td>sudo</td><td>常见说法 superuser do</td><td>⚠️ 词源有争议：官方定义为 substitute user do（替用户执行）。两种说法都流传，知道即可</td></tr>
+        </table>
+        <p>注意最后两行：<span class="term-inline">cat</span> 的字面（连接）和今天的用法（看内容）已经漂移；<span class="term-inline">sudo</span> 的展开有争议。<strong>命令的含义以「它做什么」为准，词源只是记忆挂钩。</strong></p>`,
+      key: "<strong>词源是记忆挂钩，不是定义。</strong>cat 不再「连接」、sudo 来源有争议——正常，语言都会漂移。"
+    },
+    { type: "predict",
+      title: "Word Meaning：pwd 的 p 是什么？",
+      scenario: `命令 <span class="term-inline">pwd</span> 的展开是 print working directory。三个词里它告诉你的核心信息是：`,
+      options: [
+        { t: "print（打印到屏幕）working directory（当前工作目录）", ok: true },
+        { t: "password（密码）的缩写", ok: false, why: "pwd 从不处理密码——同名缩写而已，别被带偏。" },
+        { t: "power directory——强力目录", ok: false, why: "没有这个词。print working directory 才是它的来历。" },
+        { t: "程序名而已，没有任何含义", ok: false, why: "恰恰相反：它是有含义的缩写——这正是词源表的价值。" }
+      ],
+      explain: `print working directory：把「当前工作目录」打印出来。知道字面意思后，这个命令再不会忘——<strong>因为你理解它，不是背它。</strong>`,
+      hints: [
+        "想想运行 pwd 时屏幕上出现的是什么？",
+        "出现的是路径——哪个词对应「路径」？",
+        "Answer: print working directory"
+      ]
+    },
+    { type: "matching",
+      title: "Word Meaning：命令↔全称",
+      scenario: `词源表热身：把命令连到它的全称（字面意思）：`,
+      pairs: [
+        { l: "mkdir", r: "make directory（造文件夹）" },
+        { l: "cp", r: "copy（复制）" },
+        { l: "mv", r: "move（移动/改名）" },
+        { l: "rm", r: "remove（删除）" },
+        { l: "ls", r: "list（列出）" }
+      ],
+      choices: [
+        "make directory（造文件夹）",
+        "copy（复制）",
+        "move（移动/改名）",
+        "remove（删除）",
+        "list（列出）",
+        "password（密码）"
+      ],
+      explain: `五个高频命令五个常用词。注意干扰项 password——<span class="term-inline">pwd</span> 才容易和它撞脸，这一组里可没有 pwd。`,
+      hints: [
+        "mkdir 拆成 mk + dir 就好认了",
+        "mv 和 cp 只差一个字母，含义也相近——一个是搬、一个是抄",
+        "Answer: mkdir=make directory，cp=copy，mv=move，rm=remove，ls=list"
+      ]
+    },
+    { type: "predict",
+      title: "Word Meaning：哪个命令造文件夹？",
+      scenario: `你想创建一个叫 <span class="term-inline">homework</span> 的文件夹。按字面意思选，应该用：`,
+      options: [
+        { t: "mkdir homework", ok: true },
+        { t: "ls homework", ok: false, why: "ls 是 list——看名单，不是造东西。" },
+        { t: "rm homework", ok: false, why: "rm 是 remove——方向完全反了。" },
+        { t: "cd homework", ok: false, why: "cd 是 change directory——进去，不是造出来。而且文件夹还不存在，进不去。" }
+      ],
+      explain: `mk + dir = make directory。你看，不用背——<strong>读懂字面意思，命令自己会说话。</strong>这也是 8.2 第四阶段的目标：面对陌生命令时敢猜、猜得有依据。`,
+      hints: [
+        "把每个选项的展开读出来，哪个是「制造」？",
+        "mk 让人想到 make",
+        "Answer: mkdir homework"
+      ]
+    },
+    { type: "concept",
+      title: "句法第一课：从单词到句子",
+      body: `
+        <p>语言从单词开始，但很快就变成句子。命令行语言的句子按复杂度分三档：</p>
+        <ol>
+          <li><strong>光杆命令</strong>：<span class="term-inline">pwd</span>、<span class="term-inline">ls</span>——一个词就是完整句子。</li>
+          <li><strong>命令 + 参数</strong>：<span class="term-inline">cd Documents</span>、<span class="term-inline">mkdir test</span>——动词 + 宾语。参数（argument）回答「对谁 / 去哪 / 造什么」。</li>
+          <li><strong>命令 + 选项 + 参数</strong>：<span class="term-inline">rm -r oldfolder</span>、<span class="term-inline">ls -la</span>——动词 + 副词 + 宾语。选项（option / flag，以 - 或 -- 开头）回答「怎么做」：-r = recursively 递归地，-la = 详细+全部。</li>
+        </ol>
+        <p>判断技巧：<strong>以 - 或 -- 开头的是选项（修饰动作），其余的词是参数（动作的对象）。</strong></p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="150" viewBox="0 0 660 150">
+          <text x="20" y="40" fill="#e6edf3" font-size="13" font-family="Consolas,monospace">rm <tspan fill="#3fb950">-r</tspan> <tspan fill="#d29922">oldfolder</tspan></text>
+          <rect x="20" y="52" width="34" height="22" rx="5" fill="none" stroke="#bc8cff"/>
+          <text x="37" y="67" fill="#bc8cff" font-size="10" text-anchor="middle">命令(程序)</text>
+          <rect x="58" y="52" width="30" height="22" rx="5" fill="none" stroke="#3fb950"/>
+          <text x="73" y="67" fill="#3fb950" font-size="10" text-anchor="middle">选项</text>
+          <rect x="92" y="52" width="80" height="22" rx="5" fill="none" stroke="#d29922"/>
+          <text x="132" y="67" fill="#d29922" font-size="10" text-anchor="middle">参数(对象)</text>
+          <text x="230" y="67" fill="#9aa7b4" font-size="11">- 或 -- 开头 → 选项（怎么做）；普通词 → 参数（对谁做）</text>
+          <text x="20" y="110" fill="#e6edf3" font-size="13" font-family="Consolas,monospace">cd <tspan fill="#d29922">Documents</tspan></text>
+          <text x="230" y="110" fill="#9aa7b4" font-size="11">没有选项的句子：动词 + 宾语</text>
+          <text x="20" y="140" fill="#e6edf3" font-size="13" font-family="Consolas,monospace">ls <tspan fill="#3fb950">-la</tspan></text>
+          <text x="230" y="140" fill="#9aa7b4" font-size="11">没有参数的句子：动词 + 副词</text>
+        </svg>
+        <div class="cap">三种句型：光杆 / 动词+宾语 / 动词+副词+宾语。认出句型，就能读懂没见过的命令。</div>
+        </div>`,
+      key: "<strong>- 开头的是选项（怎么做），普通词是参数（对谁做）。</strong>这个判别式覆盖 90% 的命令。"
+    },
+    { type: "predict",
+      title: "Command Structure：cd Documents 的角色拆解",
+      scenario: `在 <span class="term-inline">cd Documents</span> 里，<span class="term-inline">Documents</span> 扮演什么角色？`,
+      options: [
+        { t: "参数（argument）——动作的对象：cd 这个动词作用在 Documents 上", ok: true },
+        { t: "选项（option）——因为它跟在命令后面", ok: false, why: "位置不代表角色：选项必须有 - 或 -- 前缀，Documents 没有。" },
+        { t: "子命令（subcommand）", ok: false, why: "子命令属于 git 这类「程序带菜单」的结构；cd 没有子命令。" },
+        { t: "第二个命令", ok: false, why: "一行只有一个命令（第一个词）；后面都是它的配料。" }
+      ],
+      explain: `答案 A。判别式再背一遍：<strong>有 - 前缀 → 选项；没有 → 参数。</strong>Documents 没有前缀，所以它是 cd 的宾语——「换目录」换到 Documents。`,
+      hints: [
+        "判别式：它有没有 - 或 -- 前缀？",
+        "没有前缀的普通词 = 参数",
+        "Answer: 参数（argument）"
+      ]
+    },
+    { type: "terminal",
+      title: "Try it: 第一句你自己敲的话",
+      goal: `在终端里输入 <code>mkdir test</code> 创建一个文件夹，然后输入 <code>ls</code> 看它是否出现在名单里。`,
+      background: `第一次实操就从「动词 + 宾语」开始。注意终端底部的<strong>命令拆解条</strong>会实时标出 program / argument——打字时看一眼它，把句法视觉化。`,
+      hints: [
+        "mk + dir = 造文件夹；造完用 ls 验货",
+        "mkdir test 然后 ls",
+        "Answer: mkdir test → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && getNode(s.fs, ["C:", "Users", "YOGA", "test"]) !== undefined,
+      success: "test 出现在名单里了——这句话是你说出来的：mkdir 是动词，test 是宾语，shell 替你执行了。",
+      internals: "shell 把行拆成 [mkdir, test]：第一个词找到内置命令 mkdir，第二个词作为参数（新文件夹的名字）。OS 在你的当前目录下创建了它。",
+      breakdown: [
+        { token: "mkdir", label: "command 命令", text: "程序/内置命令：make directory。" },
+        { token: "test", label: "argument 参数", text: "动作对象：要创建的文件夹名。" }
+      ]
+    },
+    { type: "concept",
+      title: "句法第二课：program → subcommand → option → argument",
+      body: `
+        <p>有些程序「带菜单」：程序本身只是入口，真正的功能在它的<strong>子命令（subcommand）</strong>里。<span class="term-inline">git</span> 和 <span class="term-inline">python</span> 都是这种结构。以 <span class="term-inline">git commit -m "Finish homework"</span> 为例：</p>
+        <table class="cmd-table" style="margin-top:8px">
+          <tr><th>词</th><th>角色</th><th>回答的问题</th></tr>
+          <tr><td>git</td><td>program / command</td><td>谁干活？</td></tr>
+          <tr><td>commit</td><td>subcommand</td><td>干哪件事？（git 的菜单项）</td></tr>
+          <tr><td>-m</td><td>option / flag</td><td>怎么做？（m = message）</td></tr>
+          <tr><td>"Finish homework"</td><td>argument</td><td>用什么做？（提交信息；引号把空格粘成一个词）</td></tr>
+        </table>
+        <p>这是命令行语言里最复杂的常见句型。<strong>读法：从第一个词开始问「谁」，依次问「哪件事、怎么做、用什么」。</strong></p>`,
+      key: "<strong>四问读句法：谁（program）→ 哪件（subcommand）→ 怎么做（option）→ 用什么（argument）。</strong>"
+    },
+    { type: "matching",
+      title: "Command Structure：四词归位",
+      scenario: `把 <span class="term-inline">git commit -m "Finish homework"</span> 的每个词连到它的角色：`,
+      pairs: [
+        { l: `git`, r: "program（谁干活）" },
+        { l: `commit`, r: "subcommand（干哪件事）" },
+        { l: `-m`, r: "option（怎么做）" },
+        { l: `"Finish homework"`, r: "argument（用什么做）" }
+      ],
+      choices: [
+        "program（谁干活）",
+        "subcommand（干哪件事）",
+        "option（怎么做）",
+        "argument（用什么做）",
+        "第二个 program"
+      ],
+      explain: `四词四角色，一问一答。这句型以后会遇见上千次——git 的每条命令都是它的变体。<strong>认出句型比记住命令重要十倍。</strong>`,
+      hints: [
+        "-m 有前缀 → 先定位它",
+        "引号整体是一个词",
+        "Answer: git=program，commit=subcommand，-m=option，引号内容=argument"
+      ]
+    },
+    { type: "fill",
+      title: "Command Structure：补全提交命令",
+      scenario: `你想用 git 提交（commit）一次修改，附信息 <span class="term-inline">"fix typo"</span>。补全中间缺的那个词：<br><span class="term-inline">git ______ -m "fix typo"</span>`,
+      before: `git `,
+      after: ` -m "fix typo"`,
+      answer: ["commit"],
+      explain: `git 的菜单：commit（提交）、status（看状态）、add（暂存）、push（推送）……第一个词是 program，第二个词是 subcommand——<strong>告诉 git 你要哪道菜</strong>。`,
+      hints: [
+        "缺的是「哪件事」——git 菜单里的哪个词表示提交？",
+        "commit 的本义就是「提交」",
+        "Answer: commit"
+      ]
+    },
+    { type: "multiselect",
+      title: "Command Structure：找出所有选项",
+      scenario: `在 <span class="term-inline">git commit -m --amend "fix typo"</span> 里，哪些 token 是 <strong>option</strong>？（选出所有）`,
+      options: [
+        { t: "-m", ok: true },
+        { t: "--amend", ok: true },
+        { t: `"fix typo"`, ok: false, why: "引号整体是一个参数——它没带 - 前缀。" },
+        { t: "commit", ok: false, why: "子命令不是选项——它是 git 菜单里的菜名。" },
+        { t: "git", ok: false, why: "program 是主语，不是修饰语。" }
+      ],
+      explain: `<code>-m</code> 和 <code>--amend</code> 都带前缀——<strong>单横线短选项、双横线长选项</strong>，都是「怎么做」的修饰。判别式只有一条：- / -- 前缀 = 选项。`,
+      hints: [
+        "判别式：- 或 -- 前缀",
+        "引号粘起来的整体算一个词——看它有没有前缀",
+        "Answer: -m 和 --amend"
+      ],
+      key: "<strong>判别式：- / -- 前缀 = 选项。</strong>单横线短、双横线长，职责相同。"
+    },
+    { type: "predict",
+      title: "Word Meaning：-m 的 m",
+      scenario: `在 <span class="term-inline">git commit -m "msg"</span> 里，<span class="term-inline">-m</span> 几乎总是代表：`,
+      options: [
+        { t: "message——这条 option 的值就是提交信息", ok: true },
+        { t: "move", ok: false, why: "在 git commit 的语境里没有移动任何东西。" },
+        { t: "make", ok: false, why: "commit 本身已经是「做」了，-m 不重复这个意思。" },
+        { t: "multiple", ok: false, why: "和数量无关——每个 commit 只有一个 -m 主信息。" }
+      ],
+      explain: `m = message。选项的值跟在它后面（<span class="term-inline">-m "fix typo"</span>）。这也是常见模式：<strong>「短选项 + 值」往往成对出现</strong>——-o output.txt、-f config.yml 都是这个套路。`,
+      hints: [
+        "-m 后面跟的那串字是什么性质？（说明文字）",
+        "哪个词对应「信息」？",
+        "Answer: message"
+      ]
+    },
+    { type: "multiselect",
+      title: "Word / Origin：诚实词源观",
+      scenario: `关于命令名字的来源，下面哪些说法是<strong>正确</strong>的？（选出所有）`,
+      options: [
+        { t: "cat 来自 concatenate（连接），但它今天的常用义是「查看文件内容」", ok: true },
+        { t: "sudo 的展开有争议：常见说法 superuser do，官方定义 substitute user do", ok: true },
+        { t: "所有命令名都是英文单词的缩写，无一例外", ok: false, why: "错——有些是缩写，有些是完整单词（ls 之于 list），有些来源已不可考。绝对化的词源观本身就是错的。" },
+        { t: "mv = move，cp = copy——这两个可以放心按字面记", ok: true },
+        { t: "dir 是 Bash 家族的命令", ok: false, why: "dir 是 CMD/DOS 的词；Bash 家族对应的是 ls。" }
+      ],
+      explain: `词源的正确用法：<strong>当记忆挂钩，不当学术结论。</strong>cat 的词义漂移了、sudo 的来源有争议——这都不影响你用它。遇到「所有」「无一例外」这种绝对化说法，先怀疑它。`,
+      hints: [
+        "两个错误选项都有绝对化或张冠李戴的痕迹",
+        "dir 和 ls 分属哪个家族？",
+        "Answer: 正确的是第 1、2、4 句"
+      ]
+    },
+    { type: "predict",
+      title: "Word / Origin：遇到陌生命令的正确姿势",
+      scenario: `你在教程里见到一个陌生命令 <span class="term-inline">ln -s a b</span>。靠词源猜：<span class="term-inline">ln</span> 很可能和哪个词有关？（然后该用什么验证猜想？）`,
+      options: [
+        { t: "link（链接）——然后用 ln --help 或搜索引擎验证，而不是把猜测当结论", ok: true },
+        { t: "line（行）——教程不会骗人，直接照抄就行", ok: false, why: "猜可以，但「直接照抄」跳过了验证；而且 ln 的本义是 link。" },
+        { t: "login（登录）——因为它排在字母表前面", ok: false, why: "字母表位置不能推词源。" },
+        { t: "猜词源没有意义，背下来就行", ok: false, why: "恰恰相反：有依据的猜测 + 验证，是面对陌生命令最高效的策略。" }
+      ],
+      explain: `ln = link（猜对了的话），-s = symbolic。<strong>方法论：先按词源有依据地猜，再用 --help / man / 搜索验证。</strong>猜测是假设，不是知识——验证一步不能省。`,
+      hints: [
+        "l + n 两个字母，哪个常见词骨架符合？",
+        "后半问更重要：猜完之后该做什么？",
+        "Answer: link；然后用 --help / 搜索验证"
+      ]
+    },
+    { type: "fill",
+      title: "Word / Origin：sudo 的争议",
+      scenario: `诚实填空：<span class="term-inline">sudo</span> 最常见的展开是 ______ user do，但官方定义为 substitute user do，词源存在争议。`,
+      before: `sudo = `,
+      after: ` user do（有争议）`,
+      answer: ["super", "superuser"],
+      explain: `superuser do 是流传最广的展开，但官方文档写的是 substitute user do。记住两点：<strong>1. 它表示「以更高权限执行」；2. 词源有争议时，本课明确标注，不编造。</strong>`,
+      hints: [
+        "两个候选都以 s 开头",
+        "super / substitute",
+        "Answer: super（superuser do，有争议）"
+      ]
+    },
+    { type: "predict",
+      title: "Predict Output：ls 之后你会看到什么？",
+      scenario: `你在 <span class="term-inline">C:\Users\YOGA</span>（有 Desktop、Documents、Downloads、Pictures、Music 等）输入 <span class="term-inline">ls</span> 按 Enter。屏幕上最可能出现：`,
+      options: [
+        { t: "当前文件夹的成员名单（Desktop\\、Documents\\、Downloads\\ …文件夹带斜杠，文件不带）", ok: true },
+        { t: "文件的全部内容", ok: false, why: "看内容用 cat；ls 只看名单。" },
+        { t: "整个 C 盘的目录树", ok: false, why: "ls 只看当前这一层——它不会自己到处跑。" },
+        { t: "一个打开文件的对话框", ok: false, why: "那是 GUI 的东西；CLI 的输出是文字。" }
+      ],
+      explain: `答案 A。ls = list = 列<strong>当前这一层</strong>的名单。三个边界：只看一层、不给内容、不加询问。预测输出是学语言的必经之路——先猜，再运行对照。`,
+      hints: [
+        "list 的对象是什么？（名单）",
+        "哪个选项越界了：看内容 / 看全部 / 弹对话框？",
+        "Answer: 当前文件夹的成员名单"
+      ]
+    },
+    { type: "terminal",
+      title: "Try it: 第二句话——复制（先建后拷）",
+      goal: `依次输入：<code>touch todo.txt</code>（建一个空文件）、<code>mkdir backup</code>（建文件夹）、<code>cp todo.txt backup\</code>（把它复制进去）。`,
+      background: `三句话连起来就是一个完整的微型工作流：touch（造文件）→ mkdir（造文件夹）→ cp（复制）。每句都套「动词 + 宾语」句型；cp 比较贪心，要两个宾语：<strong>从哪、到哪</strong>。`,
+      hints: [
+        "cp 需要两个参数：来源和目标",
+        "touch todo.txt → mkdir backup → cp todo.txt backup\\",
+        "Answer: touch todo.txt → mkdir backup → cp todo.txt backup\\"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "cp" && getNode(s.fs, ["C:", "Users", "YOGA", "backup", "todo.txt"]) === null && getNode(s.fs, ["C:", "Users", "YOGA", "todo.txt"]) === null,
+      success: "backup 里出现了 todo.txt 的副本，原来的还在——cp 是复制不是搬家。ls backup 可以验货。",
+      internals: "cp = copy：把来源文件的内容深拷贝到目标位置。虚拟 FS 里原文件不动——复制永远是「多一份」。",
+      breakdown: [
+        { token: "cp", label: "command 命令", text: "copy：复制。" },
+        { token: "todo.txt", label: "argument 参数 1（来源）", text: "从哪复制。" },
+        { token: "backup\\", label: "argument 参数 2（目标）", text: "复制到哪。目标可以是文件夹（拷进去）或新文件名。" }
+      ]
+    },
+    { type: "predict",
+      title: "Predict Behavior：cp 之后原文件还在吗？",
+      scenario: `你执行了 <span class="term-inline">cp todo.txt backup\todo.txt</span>。<strong>执行后，原来的 todo.txt 会怎样？</strong>`,
+      options: [
+        { t: "还在原处——cp 是复制，两份互不相干", ok: true },
+        { t: "消失了——被搬进了 backup", ok: false, why: "那是 mv（move）的行为；cp 是 copy。" },
+        { t: "变成了快捷方式", ok: false, why: "那是 ln -s 的行为。" },
+        { t: "内容被清空", ok: false, why: "cp 不改来源文件。" }
+      ],
+      explain: `cp vs mv 是命令行最经典的近义词辨析：<strong>cp = 抄（原件保留），mv = 搬（原件消失）</strong>。记住这对，再看到「文件怎么没了」的 bug 时就知道去哪查。`,
+      hints: [
+        "c 开头和 m 开头，哪个是 copy？",
+        "「搬」走的东西原来位置还有吗？",
+        "Answer: 还在原处（cp = 复制）"
+      ]
+    },
+    { type: "fill",
+      title: "Build a Command：造一句「移动」",
+      scenario: `把 <span class="term-inline">notes.txt</span> 移动到 <span class="term-inline">Documents</span> 文件夹。补全命令：<br><span class="term-inline">______ notes.txt Documents\</span>`,
+      before: ``,
+      after: ` notes.txt Documents\\`,
+      answer: ["mv"],
+      explain: `mv = move：两个宾语（从哪、到哪）。它和 cp 的唯一区别是「原件不留」。这也是「改名」的命令：<span class="term-inline">mv a.txt b.txt</span> 就是给文件换名字。`,
+      hints: [
+        "「搬」是哪个词？两个字母",
+        "copy 的 c 换成 move 的 m",
+        "Answer: mv"
+      ]
+    },
+    { type: "terminal",
+      title: "Try it: 体验错误——命令会说话",
+      goal: `先故意输入 <code>mdkir lab</code>（打错的 mkdir），读错误信息；然后输入正确的 <code>mkdir lab</code>。`,
+      background: `错误不是失败，是 shell 在给你上小课。这次任务的目标就是<strong>读错误</strong>：它说了谁错了、错成什么样、为什么。`,
+      hints: [
+        "对比两次输入的差别——就差一个字母",
+        "mdkir lab 然后 mkdir lab",
+        "Answer: mdkir lab（读报错）→ mkdir lab"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mkdir" && getNode(s.fs, ["C:", "Users", "YOGA", "lab"]) !== undefined,
+      success: "第一次：shell 翻遍 PATH 找不到 mdkir.exe——command not found。第二次：mkdir 是内置命令，秒懂。错误信息就是你的私人教师。",
+      internals: "两个结果对应六环链条的两个环节：mdkir 死在「查找」环（PATH 里没有），mkdir 活到「执行」环（shell 内置命令，无需 PATH）。定位错误 = 定位链条断点。",
+      breakdown: [
+        { token: "mdkir", label: "program 程序（不存在）", text: "查找环失败：PATH 里没有 mdkir.exe。" },
+        { token: "mkdir", label: "command 命令（内置）", text: "shell 自带的命令，直接执行。" },
+        { token: "lab", label: "argument 参数", text: "两种情况下角色相同——句子结构没错，词拼错了。" }
+      ]
+    },
+    { type: "predict",
+      title: "Error Diagnosis：command not found 的第一反应",
+      scenario: `你输入 <span class="term-inline">gti status</span>，得到 <span class="term-inline">command not found</span>。<strong>最合理的第一反应是：</strong>`,
+      options: [
+        { t: "检查拼写（gti → git）；拼写没问题再查这个程序是否安装、是否在 PATH", ok: true },
+        { t: "重启电脑", ok: false, why: "not found 是查找问题，重启不解决任何事。" },
+        { t: "换管理员终端重试", ok: false, why: "权限问题会报 denied 而不是 not found——这是两种错误。" },
+        { t: "卸载重装 Windows", ok: false, why: "……大材小用到离谱。" }
+      ],
+      explain: `诊断顺序：<strong>拼写 → 安装了吗 → PATH 里有吗</strong>。三关过完还是不行才考虑别的。把「第一反应」养成反射，排查速度提升十倍。`,
+      hints: [
+        "错误发生在六环的哪一环？（查找）",
+        "查找环节的三个关卡：拼写、安装、PATH",
+        "Answer: 先查拼写，再查安装和 PATH"
+      ]
+    },
+    { type: "predict",
+      title: "Error Diagnosis：rm 为什么拒绝我？",
+      scenario: `你输入 <span class="term-inline">rm oldfolder</span>，得到「是一个文件夹，rm 拒绝直接删文件夹……用 rm -r」。<strong>这个设计的意图是：</strong>`,
+      options: [
+        { t: "防手滑——删文件夹影响面大，强制你加 -r 表示「我确认要递归删除」", ok: true },
+        { t: "rm 有 bug", ok: false, why: "这是有意设计，几乎所有 rm 实现都这样。" },
+        { t: "文件夹是系统文件", ok: false, why: "rm 还不知道里面是什么——它只认「这是文件夹」这一个事实。" },
+        { t: "需要管理员权限", ok: false, why: "权限问题报 denied，不会提示 -r。" }
+      ],
+      explain: `答案 A。<strong>-r = recurse（递归）：「连同里面所有东西一起删」。</strong>多敲两个字符 = 一次明确的确认。这个「费力确认」设计在命令行里到处都是——它把破坏性的操作变得「需要故意的」。`,
+      hints: [
+        "加 -r 和直接删，哪个更「费力」？费力通常是有意的",
+        "回想 least privilege——同一个哲学",
+        "Answer: 防手滑的确认设计"
+      ]
+    },
+    { type: "predict",
+      title: "Error Diagnosis：cat 一个文件夹",
+      scenario: `你输入 <span class="term-inline">cat Pictures</span>，得到「是一个文件夹。cat 用来查看文件内容」。<strong>错误发生在哪个环节？</strong>`,
+      options: [
+        { t: "「执行」环——cat 成功启动了，但程序发现参数的类型不对（文件夹没有「内容」可看）", ok: true },
+        { t: "「查找」环——找不到 cat", ok: false, why: "cat 已经跑起来了，是它在抱怨。" },
+        { t: "「解析」环——shell 没看懂这行", ok: false, why: "shell 解析得很成功：cat + Pictures，职责分明。" },
+        { t: "OS 权限拦截", ok: false, why: "报的不是 denied。" }
+      ],
+      explain: `三种报错对应三个环节：<strong>找不到 = 查找环；看不懂 = 解析环；跑起来了但抱怨参数 = 执行环（程序自己报的）</strong>。读懂「谁在说这句话」，错误就已经诊断了一半。`,
+      hints: [
+        "报错信息是谁的口吻？（cat 的）",
+        "谁启动了 cat？（shell 已经成功调度）",
+        "Answer: 执行环——程序对参数不满意"
+      ]
+    },
+    { type: "concept",
+      title: "code .：为什么这行字能打开 VS Code",
+      body: `
+        <p>把前面所有东西串起来，解剖你未来每天要敲几十次的 <span class="term-inline">code .</span>：</p>
+        <ol>
+          <li><strong>code</strong> = 程序名。VS Code 安装时把 <span class="term-inline">code.cmd</span> 注册进了 PATH——所以任何 shell 都找得到它（还记得 Level 6 的「报户口」吗）。</li>
+          <li><strong>.</strong> = 参数：当前目录（Level 2 的老朋友）。</li>
+          <li>Shell 找到 code → OS 启动它 → 它收到参数 <span class="term-inline">.</span> → 把「当前目录」作为文件夹打开。</li>
+        </ol>
+        <p>一句话：<strong>Terminal 启动了一个 GUI program，GUI program 打开了当前目录。</strong>terminal 没有「变成」VS Code，也没有「打开」文件——它只是精确地叫来了一个能干这事的程序。</p>
+        <p>对比四兄弟：</p>
+        <table class="cmd-table" style="margin-top:6px">
+          <tr><th>命令</th><th>叫来的 program</th><th>结果</th></tr>
+          <tr><td>code .</td><td>VS Code</td><td>编辑器窗口打开当前文件夹</td></tr>
+          <tr><td>code test.py</td><td>VS Code</td><td>打开这个文件（且在编辑器里）</td></tr>
+          <tr><td>explorer .</td><td>File Explorer</td><td>资源管理器窗口停在当前文件夹</td></tr>
+          <tr><td>notepad test.txt</td><td>记事本</td><td>GUI 编辑器打开这个文件</td></tr>
+        </table>`,
+      key: "<strong>code . = program(code) + argument(.)。</strong>Terminal 的本事不是「打开」，是「精确地叫人」。"
+    },
+    { type: "fill",
+      title: "Build a Command：打开当前文件夹",
+      scenario: `你想在 <strong>文件资源管理器</strong>里打开当前目录（参数还是那个点）。补全命令：<br><span class="term-inline">______ .</span>`,
+      before: ``,
+      after: ` .`,
+      answer: ["explorer", "start"],
+      explain: `explorer . = 叫来 File Explorer 打开当前目录（start . 等价）。对比上一关的 code .：program 换了、参数没变——<strong>句型不变，词汇替换</strong>。这就是学会了句法的感觉。`,
+      hints: [
+        "「探索」文件的是哪个程序？八个字母",
+        "code . 叫编辑器；这个命令叫资源管理器",
+        "Answer: explorer .（或 start .）"
+      ]
+    },
+    { type: "ordering",
+      title: "Mental Model：code . 的执行链",
+      scenario: `把 <span class="term-inline">code .</span> 按下 Enter 后的链条排对顺序：`,
+      items: [
+        { id: "find", t: "Shell 在 PATH 里找到 code（VS Code 的 CLI 入口）" },
+        { id: "type", t: "你输入 code . 并按下 Enter" },
+        { id: "vscode", t: "VS Code 进程启动" },
+        { id: "parse", t: "Shell 拆词：program = code，argument = ." },
+        { id: "open", t: "VS Code 打开当前目录，GUI 窗口出现" }
+      ],
+      order: ["type", "parse", "find", "vscode", "open"],
+      explain: `没有任何新东西——六环链条的又一次实战。值得注意的是最后两环：<strong>GUI 窗口的出现只是「程序的输出碰巧是窗口」</strong>，链条本身和 ls 一模一样。`,
+      hints: [
+        "前三个环和上次的 git --version 完全一致",
+        "变化发生在程序启动之后",
+        "Answer: 输入 → 拆词 → 找 code → VS Code 启动 → 打开目录"
+      ]
+    },
+    { type: "multiselect",
+      title: "Mental Model：Terminal 与 GUI program 的关系",
+      scenario: `关于「terminal 启动 GUI program」，下面哪些说法是正确的？（选出所有）`,
+      options: [
+        { t: "code . 之后 terminal 并没有「变成」VS Code——两个进程各干各的", ok: true },
+        { t: "terminal 的能力 = 它能启动的 program 的集合", ok: true },
+        { t: "GUI program 启动后，terminal 就作废了", ok: false, why: "terminal 还在原地等你下一条命令——你可以叫它开十个窗口。" },
+        { t: "CLI 与 GUI 是互补工具：CLI 负责「叫人」，GUI 负责「展示」", ok: true },
+        { t: "只有 GUI 才能打开文件", ok: false, why: "cat 就能在 terminal 里打开（显示）文件内容——只是展示方式不同。" }
+      ],
+      explain: `terminal 和 GUI program 是<strong>合作关系而非替代关系</strong>：你叫（CLI），它来（GUI 进程），你继续叫下一个。这也是 8.0 那句「CLI 可以召唤 GUI」的完整版解释。`,
+      hints: [
+        "启动 VS Code 后你的提示符还在吗？（在）",
+        "cat 打开文件和记事本打开文件差在哪？（展示方式）",
+        "Answer: 前两条加第四条"
+      ]
+    },
+    { type: "terminal",
+      title: "Final Try: 毕业小考——三句话建家",
+      goal: `依次输入：<code>mkdir mylab</code>、<code>cd mylab</code>、<code>pwd</code>——建一个文件夹、走进去、报出你在哪。`,
+      background: `终考只有三句话，但每句都有考点：mkdir（造）→ cd（进）→ pwd（报位置）。如果你不用 Hint 就一次通过——恭喜，你已经会用「语言」而不是「咒语」思考了。`,
+      hints: [
+        "三句都是老朋友：造、进、报",
+        "mkdir mylab → cd mylab → pwd",
+        "Answer: mkdir mylab → cd mylab → pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA\\mylab",
+      success: "PS C:\\Users\\YOGA\\mylab——你造了一个空间、走进去、并报出了坐标。这是命令行语言的第一段完整对话。Module 02 的地基到此打完。",
+      internals: "三句话对应三种句型：mkdir mylab（动词+宾语）、cd mylab（动词+宾语）、pwd（光杆命令）。全部命中，说明「program → argument」的句法已经长在你手上了。",
+      breakdown: [
+        { token: "mkdir mylab", label: "动词 + 宾语", text: "在当前目录造一个叫 mylab 的文件夹。" },
+        { token: "cd mylab", label: "动词 + 宾语", text: "把「你站的位置」改到 mylab 里面——移动的是你，不是文件。" },
+        { token: "pwd", label: "光杆命令", text: "报出当前工作目录，验证你真的进去了。" }
+      ]
     }
   ]
 }
@@ -2713,12 +4048,118 @@ const REVIEWS = {
     ]
   }
 
+,
+  "8.1": {
+    concepts: [
+      "GUI 和 CLI 都在向计算机表达「我要它做什么」——点击和打字是同一种意图的两种表达；CLI 把指令变成可读可改的文字",
+      "打字时 terminal 只做传声筒+显示屏（echo），按 Enter 才转交 shell；打错可退格因为命令「还不存在」",
+      "Window/Tab/Pane 是容器（格子），Shell/Process 是住客（活的）；格子没了住客也活不成",
+      "CMD（老、Windows 自带、提示符无 PS）/ PowerShell（现代、Verb-Noun、PS 前缀）/ Bash（Linux 世界标准、$ 结尾）——命令跑不通先问写给哪个 shell",
+      "分层命名法：OS 层（Unix/Linux/Ubuntu）、Shell 层（Bash/PowerShell/CMD）、程序层（git/python）、网站（GitHub）、机制（WSL）——跨层等于号是万恶之源",
+      "Permission（对资源）/ Privilege（对账户档位）/ Elevation（提权动作）；least privilege：普通权限是安全气囊，UAC 是提权门禁",
+      "六环链：User → GUI/Terminal → Command → Shell → Program/OS → Files/Processes——遇到现象先定位在哪一环",
+      "证据边界：提示符只报 shell 口音和 cwd；权限看标题栏、程序是否存在用 where/--version 验证，不靠猜"
+    ],
+    commands: [],
+    terms: [
+      { en: "GUI / CLI", zh: "图形界面 / 命令行界面", ex: "两种表达意图的方式" },
+      { en: "echo", zh: "回显", ex: "terminal 把按键画回屏幕" },
+      { en: "container vs resident", zh: "容器 vs 住客", ex: "格子是死的，进程是活的" },
+      { en: "Cmdlet / Verb-Noun", zh: "PowerShell 命令风格", ex: "Get-Location" },
+      { en: "Unix / Linux / Ubuntu", zh: "OS 层三词", ex: "源头 / 开源系统 / 发行版" },
+      { en: "WSL", zh: "机制不是住户", ex: "让 Linux 住进 Windows" },
+      { en: "access token", zh: "权限令牌", ex: "进程出生时发，OS 门禁要查" },
+      { en: "UAC", zh: "提权门禁", ex: "User Account Control" },
+      { en: "least privilege", zh: "最小权限原则", ex: "平时普通权限，需要才提权" }
+    ],
+    mistakes: [
+      "把按钮和命令看成两种东西——按钮也是指令，只是藏在 GUI 后面",
+      "以为打字时 shell 在实时解析——Enter 之前命令还不存在",
+      "从一条命令的成功推出过多结论（如在用 Git / 变成了 Linux / 连了网）",
+      "把容器和住客混为一谈：关掉 window，shell 进程也死",
+      "见到「所有 / 只能 / 必须」不加怀疑",
+      "凭提示符猜测权限或程序是否安装——超出证据边界"
+    ],
+    quiz: [
+      { q: "你在 terminal 里键入字母 g，它立刻出现在屏幕上。此刻字母第一个到达谁？", options: [
+        { t: "terminal app（捕获并 echo，攒成一行）", ok: true, why: "" },
+        { t: "PowerShell（实时解析）", ok: false, why: "解析发生在 Enter 之后。" },
+        { t: "OS", ok: false, why: "OS 只送键盘事件，不懂命令。" },
+        { t: "git.exe", ok: false, why: "此刻 git 还没被叫到。" } ] },
+      { q: "下面哪些属于「系统/OS 层」？", options: [
+        { t: "Unix / Linux / Ubuntu", ok: true, why: "" },
+        { t: "Bash 和 Git Bash", ok: false, why: "Shell 层。" },
+        { t: "WSL", ok: false, why: "机制，不是系统本身。" },
+        { t: "git", ok: false, why: "程序层。" } ] },
+      { q: "同一条命令普通终端 denied、管理员终端成功。差别在哪？", options: [
+        { t: "两个进程的权限令牌不同", ok: true, why: "" },
+        { t: "管理员键盘更快", ok: false, why: "无关。" },
+        { t: "普通终端拼写错误", ok: false, why: "denied 不是拼写问题。" },
+        { t: "普通终端没联网", ok: false, why: "权限检查是本地的。" } ] }
+    ]
+  },
+  "8.2": {
+    concepts: [
+      "命令是语言不是咒语：词汇（命令名）+ 句法（结构）；第一个词是动词（程序），后面是宾语（参数）",
+      "三种句型：光杆命令（pwd）、动词+宾语（cd Documents）、动词+选项+宾语（rm -r old）",
+      "program → subcommand → option → argument 四问读句法：谁干活、哪件事、怎么做、用什么",
+      "判别式：- / -- 前缀 = 选项（怎么做）；普通词 = 参数（对谁做）；引号把带空格的内容粘成一个参数",
+      "词源是记忆挂钩不是定义：cat（concatenate）词义已漂移；sudo 展开有争议（superuser do / substitute user do）——有争议就标注，不编造",
+      "cp = 抄（原件保留）vs mv = 搬（原件消失）；mv 同时是「改名」",
+      "错误诊断看六环断点：not found = 查找环（拼写→安装→PATH）；程序抱怨参数 = 执行环",
+      "code . = program(code，安装时注册进 PATH) + argument(. )；terminal 启动 GUI program——能力是「能叫来谁」",
+      "rm 拒删文件夹要求 -r：费力确认设计，把破坏性操作变得「需要故意的」"
+    ],
+    commands: [
+      { cmd: "touch <file>", en: "touch", zh: "造空文件 / 刷新时间戳" },
+      { cmd: "cat <file>", en: "concatenate", zh: "查看文件内容（本义是连接）" },
+      { cmd: "cp <src> <dst>", en: "copy", zh: "复制（原件保留）" },
+      { cmd: "mv <src> <dst>", en: "move", zh: "移动 / 改名（原件消失）" },
+      { cmd: "rm <file> / rm -r <dir>", en: "remove", zh: "删除；文件夹需 -r（递归确认）" },
+      { cmd: "git commit -m \"msg\"", en: "—", zh: "program+subcommand+option+argument 四词全齐" },
+      { cmd: "code .", en: "—", zh: "叫 VS Code 打开当前目录" }
+    ],
+    terms: [
+      { en: "command / argument", zh: "命令 / 参数", ex: "动词 / 宾语" },
+      { en: "option / flag", zh: "选项 / 开关", ex: "-m、--amend：怎么做" },
+      { en: "subcommand", zh: "子命令", ex: "git 菜单里的菜名" },
+      { en: "concatenate", zh: "连接", ex: "cat 的本义，今义已漂移" },
+      { en: "recurse (-r)", zh: "递归", ex: "连同内容一起删的确认" },
+      { en: "concat / sudo 词源争议", zh: "词源标注原则", ex: "帮助记忆，不当定义" }
+    ],
+    mistakes: [
+      "背命令不学句型——遇到变体就懵；句型会了，陌生命令也能猜个八九不离十",
+      "把词源当定义较真——cat 不「连接」了很正常，语言会漂移",
+      "编造词源自我安慰——有争议就标注（如 sudo），不脑补",
+      "混淆 cp 和 mv——文件「怎么没了」先想是不是用了 mv",
+      "见到报错就慌——先定位六环断点：谁在说这句话（shell 还是程序）",
+      "以为 terminal「打开」了文件——是 terminal 叫来的 program 打开的"
+    ],
+    quiz: [
+      { q: "在 git commit -m \"fix typo\" 里，-m 的角色是？", options: [
+        { t: "option（怎么做：message）", ok: true, why: "" },
+        { t: "subcommand", ok: false, why: "子命令是 commit。" },
+        { t: "argument", ok: false, why: "argument 是引号里的 \"fix typo\"。" },
+        { t: "program", ok: false, why: "program 是 git。" } ] },
+      { q: "cp todo.txt backup\\ 执行后，原来的 todo.txt 会怎样？", options: [
+        { t: "还在原处——cp 是复制", ok: true, why: "" },
+        { t: "消失了——被搬走了", ok: false, why: "那是 mv。" },
+        { t: "变成快捷方式", ok: false, why: "那是 ln -s。" },
+        { t: "内容被清空", ok: false, why: "cp 不改来源。" } ] },
+      { q: "输入 gti status 报 command not found，第一反应是？", options: [
+        { t: "检查拼写（gti→git），再查安装与 PATH", ok: true, why: "" },
+        { t: "重启电脑", ok: false, why: "无关。" },
+        { t: "换管理员终端", ok: false, why: "权限问题报 denied。" },
+        { t: "重装系统", ok: false, why: "离谱。" } ] }
+    ]
+  }
+
 };
 
 const ROADMAP = [
   { mod: "A", name: "File System & Paths · 文件系统与路径", levels: [0,1,2], desc: "Level 0 操作对象 → Level 1 文件与文件夹 → Level 2 路径（绝对/相对/..）" },
   { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
-  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8 Terminal Ecosystem（GUI/CLI、Terminal vs Shell、Git Bash 辨析、VS Code 内置终端、权限与提权、窗口识别五问）" },
+  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）" },
   { mod: "D", name: "Git & GitHub", levels: [9,10,11,12,13,14,15], desc: "Level 9 Git mental model → 10 GitHub → 11 Repository → 12 clone/status/add/commit → 13 remote/push/pull（含 fetch vs pull 可视化）→ 14 分支与合并 → 15 阅读真实仓库 LaTeX-Workshop-2026" },
   { mod: "E", name: "Development Environment · 开发环境", levels: [16,17], desc: "Level 16 VS Code 与开发环境 → Level 17 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
   { mod: "F", name: "Network Basics · 网络基础", levels: [18,19], desc: "Level 18 IP / DNS / 网络连接 → Level 19 ping / ipconfig / nslookup / 代理" },
