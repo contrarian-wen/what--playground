@@ -1,5 +1,49 @@
 # Changelog · 变更记录
 
+## v1.5 · 2026-09-27 — Level 8.3 / 8.4：从「教过」到「学会」
+
+### 背景：试玩反馈驱动的路线重排
+
+- 用户完成 8.1 / 8.2 后反馈：8.2 虽然**介绍过** command / subcommand / option / argument，但实际遇到 `git commit -m "hello"` 仍拆不出结构——**教过 ≠ 学会**。
+- 原定路线 8.3 = Command Line in Practice 的编号假设「8.2 已教会句法」，与事实不符。因此把句法独立成关、整体后移：
+  - **8.3 = Command Syntax（新）**——补上真正的漏洞
+  - **8.4 = Command Line in Practice**（原 8.3 内容）
+  - **8.5 = Same Computer, Different Shells**（原 8.4，只设计未实现）
+  - 8.6 Git Bash → 8.7 WSL / Ubuntu（更远期，未实现）
+
+### Level 8.3 Command Syntax（新关）
+
+- 回答的认知问题：**"How is a sentence built?"**
+- 句法渐进主线：`pwd` → `cd Documents` → `ls -l` → `rm -r oldfolder` → `git commit -m "hello"`，一条比一条复杂，每步都拆 token。
+- 核心机制：command vs program（谁执行）、option vs argument 双重判据（`-` 前缀 + 改变行为 vs 操作对象）、subcommand 工具箱直觉（git 是工具箱，commit 是格子）、`-m` 与 `"hello"` 的父子关系（option 领养 argument）、**pattern 不是法律**（`-m` 是约定俗成，查文档才知道）。
+- 题型约 18 道：反向组装（给目的拼命令）、为什么题（为什么这么设计）、Unknown Command Challenge（陌生命令现场拆解）、fill / multiselect / matching 综合。
+- **五步自问法**（遇到任何陌生命令的通用拆句法）作为本关可带走的工具。
+- **28 个 Step**，毕业任务 `git init` → `git commit -m "Finish homework"`（引擎首次支持真实 commit 流程模拟）。
+
+### Level 8.4 Command Line in Practice（新关）
+
+- 回答的认知问题：**"Can I write one myself?"**——从「读懂结构」转向「亲手写出一条命令」。
+- 10 个 terminal 实操任务（PowerShell 主线）：热身导航、`. / ..` 上楼、绝对路径直达、建练习场、文件三件套（touch/ls/cd）、引号建 `"my folder"`、通配符圈选 `*.txt`、**安全删除流程**（先 `ls *.txt` 确认再 `rm`）、`explorer .` GUI 召唤、毕业建家任务（mkdir → cd → touch → code . 四拍链）。
+- 终端状态跨任务**累积**（后续任务依赖前面建过的目录），贴近真实使用。
+- **30 个 Step**，约 20+ 道互动题。
+
+### 虚拟终端引擎
+
+- **引号感知分词**：成对引号内的空格不再切分参数，`result.quoted` 记录每个参数是否带引号（教学用）。
+- **通配符**：`*` 和 `?` 支持（`ls *.txt`、`rm -r` 目录匹配等），glob 分支在路径存在性检查之前执行。
+- **git 引擎重做**：`git init` 在 cwd 建 `.git` 节点；有 `.git` 时 `git commit -m` 模拟真实输出（`[main (root-commit) a1b2c3d] <msg>`）、`git status` 成功；无 `.git` 仍报 `fatal: not a git repository`（Level 6 旧题回归依赖此错误）。
+- help 列表更新：引号、通配符、`git init/commit/status` 行。
+
+### 架构与文档
+
+- §11 新增内容设计原则：**「已介绍 ≠ 已学会」**——每个概念必须有独立的检验环节；试玩反馈优先于课程假设（编号与路线可为补漏洞而调整）。
+- 路线图更新（见 ARCHITECTURE.md §10）：Bash 作为**第二阶段**逐渐引入——PowerShell 是当前唯一实操主线，8.5 只做 PowerShell↔Bash 对照观察（不要求会 Bash），8.6 Git Bash、8.7 WSL 更晚。目标：Command Line fundamentals → PowerShell → Bash basics → Git Bash → WSL / Ubuntu / Bash。
+
+### 测试
+
+- Node 结构 + 引擎单测 **480 断言全绿**（13 关结构、引号/通配符/git 引擎行为、8.3 毕业 validate、8.4 十任务**累积状态**模拟、8.0/8.2 旧任务回归）。
+- Edge 无头 E2E 自动通关 **Level 8.0 / 8.1 / 8.2 / 8.3 / 8.4 五关**（含全部互动题型与 terminal 任务），五关均到达 Review 页。
+
 ## v1.4 · 2026-09-27 — Level 8 Restructuring
 
 ### Level 8.0 Terminal Ecosystem（保留 + 增强）

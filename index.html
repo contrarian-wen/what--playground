@@ -460,6 +460,13 @@ function getNode(fs, pathArr){
   return node;
 }
 
+// 极简通配符：只支持 *（任意长度）和 ?（单个字符），大小写不敏感
+function globToRegExp(pattern){
+  const re = String(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp("^" + re + "$", "i");
+}
+function hasGlob(s){ return typeof s === "string" && (s.indexOf("*") !== -1 || s.indexOf("?") !== -1); }
+
 const COMMAND_INFO = {
   pwd: { en: "print working directory", zh: "打印当前工作目录 —— 回答「我现在在哪？」" },
   ls:  { en: "list", zh: "列出当前文件夹里有什么" },
@@ -474,9 +481,16 @@ function executeCommand(state, line){
     lines: [], cwdBefore: state.cwd.slice(), cwdAfter: state.cwd.slice(), resolved: null
   };
   if(trimmed === "") return result;
-  const tokens = trimmed.split(/\s+/);
+  // 引号感知分词：引号包住的空格内容算一个 token，引号本身被剥掉
+  // 教学点：mkdir "my folder" 是一个参数，mkdir my folder 是两个
+  const rawTokens = trimmed.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  const tokens = rawTokens.map(t => {
+    if(t.length >= 2 && ((t.charAt(0) === '"' && t.charAt(t.length - 1) === '"') || (t.charAt(0) === "'" && t.charAt(t.length - 1) === "'"))) return t.slice(1, -1);
+    return t;
+  });
   result.cmd = tokens[0].toLowerCase();
   result.args = tokens.slice(1);
+  result.quoted = rawTokens.slice(1).map((t, i) => tokens[i + 1] !== t); // 每个参数是否曾被引号包住
   // PowerShell 原生名（Verb-Noun）映射到 Bash 风格实现：同一行为，不同名字（alias 概念）
   const PS_NATIVE = {
     "get-location":  { to: "pwd", note: "(Get-Location is PowerShell's native name; Bash calls the same behavior 'pwd')" },
@@ -499,6 +513,19 @@ function executeCommand(state, line){
     const opts = result.args.filter(a => a.charAt(0) === "-");
     if(opts.length > 0){
       result.lines.push({ text: `（模拟器暂不支持选项 ${opts.join(" ")}——真实终端里它是「开关」：比如 -la = 详细列出 + 含隐藏文件。先按普通 ls 显示。）`, cls: "t-dim" });
+    }
+    if(nonOpt.length > 0 && hasGlob(nonOpt[0])){
+      // 通配符模式：对当前文件夹的成员做匹配
+      const cur = getNode(state.fs, state.cwd);
+      const re = globToRegExp(nonOpt[0]);
+      const names = Object.keys(cur).filter(n => re.test(n));
+      if(names.length === 0){
+        result.lines.push({ text: `ls: 当前文件夹里没有成员匹配模式“${nonOpt[0]}”。`, cls: "t-dim" });
+        return result;
+      }
+      result.lines.push({ text: `（通配符模式 ${nonOpt[0]} 匹配到 ${names.length} 个成员）`, cls: "t-dim" });
+      names.sort().forEach(n => result.lines.push({ text: cur[n] !== null ? n + "\\" : n, cls: cur[n] !== null ? "t-green" : "t-ok" }));
+      return result;
     }
     if(nonOpt.length > 0){
       const r = resolvePath(state, nonOpt[0]);
@@ -573,10 +600,41 @@ function executeCommand(state, line){
       result.lines.push({ text: "(git 在等你告诉它做什么：commit? push? 子命令是 Level 8+ 的内容)", cls: "t-dim" });
       return result;
     }
-    // 其他子命令：尚未初始化仓库 → 经典错误体验
-    result.err = true;
-    result.lines.push({ text: "fatal: not a git repository (or any of the parent directories): .git", cls: "t-err" });
-    result.lines.push({ text: "(致命错误：当前文件夹不是 git 仓库。git 只能在一个 repository 里工作 —— Module 03 详解。)", cls: "t-dim" });
+    if(sub === "init"){
+      // 虚拟仓库：在 cwd 建一个 .git 目录——后续 commit/status 等子命令因此「有了家」
+      const cur = getNode(state.fs, state.cwd);
+      if(".git" in cur){
+        result.err = true;
+        result.lines.push({ text: "fatal: 已经是一个 git 仓库了（.git 已存在）。", cls: "t-err" });
+        return result;
+      }
+      cur[".git"] = {};
+      result.lines.push({ text: "Initialized empty Git repository in " + pathStr(state.cwd) + "/.git/", cls: "t-green" });
+      result.lines.push({ text: "(git init = 在当前文件夹建一个 .git 数据库。从此这个文件夹升级成 repository——Module 03 详解)", cls: "t-dim" });
+      return result;
+    }
+    // 其他子命令：需要 cwd 里已有 .git（只查当前层，模拟从简）
+    const curNode = getNode(state.fs, state.cwd);
+    if(!(".git" in curNode)){
+      result.err = true;
+      result.lines.push({ text: "fatal: not a git repository (or any of the parent directories): .git", cls: "t-err" });
+      result.lines.push({ text: "(致命错误：当前文件夹不是 git 仓库。git 只能在一个 repository 里工作 —— Module 03 详解。)", cls: "t-dim" });
+      return result;
+    }
+    if(sub === "commit"){
+      const msg = result.args[result.args.indexOf("-m") + 1] || "(no message)";
+      result.lines.push({ text: "[main (root-commit) a1b2c3d] " + msg, cls: "t-ok" });
+      result.lines.push({ text: "(模拟提交成功：git 把当前快照存进了 .git 数据库。真实的 add/commit 流程是 Module 03 的内容)", cls: "t-dim" });
+      return result;
+    }
+    if(sub === "status"){
+      result.lines.push({ text: "On branch main", cls: "t-ok" });
+      result.lines.push({ text: "nothing to commit, working tree clean", cls: "t-ok" });
+      result.lines.push({ text: "(模拟：仓库一切正常，没有待提交的改动)", cls: "t-dim" });
+      return result;
+    }
+    result.lines.push({ text: "git " + sub + ": simulated OK (repository exists)", cls: "t-ok" });
+    result.lines.push({ text: "(这个子命令的详细玩法属于 Module 03 Git & GitHub)", cls: "t-dim" });
     return result;
   }
 
@@ -707,6 +765,29 @@ function executeCommand(state, line){
       result.lines.push({ text: "rm: 缺少目标。用法：rm <文件名>（文件夹需 rm -r <文件夹名>）", cls: "t-err" });
       return result;
     }
+    const recursive = flags.some(f => f.indexOf("r") !== -1);
+    if(hasGlob(target)){
+      // 通配符删除：对当前文件夹成员批量匹配（先做：含 * 的名字不会被 resolvePath 解析）
+      const cur = getNode(state.fs, state.cwd);
+      const re = globToRegExp(target);
+      const matches = Object.keys(cur).filter(n => re.test(n));
+      if(matches.length === 0){
+        result.err = true;
+        result.lines.push({ text: `rm: 当前文件夹里没有成员匹配模式“${target}”。`, cls: "t-err" });
+        return result;
+      }
+      const dirs = matches.filter(n => cur[n] !== null);
+      if(dirs.length > 0 && !recursive){
+        result.err = true;
+        result.lines.push({ text: `rm: 模式“${target}”也匹配到了文件夹（${dirs.join("、")}）——rm 拒绝直接删文件夹。`, cls: "t-err" });
+        result.lines.push({ text: "缩小模式只匹配文件，或确认后用 rm -r。", cls: "t-dim" });
+        return result;
+      }
+      matches.forEach(n => delete cur[n]);
+      result.lines.push({ text: `已删除 ${matches.length} 个匹配成员：${matches.sort().join("、")}`, cls: "t-green" });
+      result.lines.push({ text: "(虚拟系统里删的，别担心；真实终端里这个动作不可撤销——用通配符前先 ls 一遍模式确认会命中谁)", cls: "t-dim" });
+      return result;
+    }
     const r = resolvePath(state, target);
     const node = r ? getNode(state.fs, r) : undefined;
     if(!r || node === undefined){
@@ -714,7 +795,6 @@ function executeCommand(state, line){
       result.lines.push({ text: `rm: ${target}: 没有那个文件或目录`, cls: "t-err" });
       return result;
     }
-    const recursive = flags.some(f => f.indexOf("r") !== -1);
     if(node !== null && !recursive){
       result.err = true;
       result.lines.push({ text: `rm: ${target}: 是一个文件夹，里面可能有重要东西。`, cls: "t-err" });
@@ -857,7 +937,7 @@ function executeCommand(state, line){
 
   if(cmd === "help"){
     result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
-    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members of a folder", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder", "touch <file>          - create an empty file", "cat <file>            - print a file's content", "cp <src> <dst>        - copy a file/folder", "mv <src> <dst>        - move / rename", "rm <file> / rm -r <dir>- delete (folder needs -r)", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members (supports pattern like *.txt)", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder (quote names with spaces)", "touch <file>          - create an empty file", "cat <file>            - print a file's content", "cp <src> <dst>        - copy a file/folder", "mv <src> <dst>        - move / rename", "rm <file> / rm -r <dir>- delete (folder needs -r; supports *.txt)", "quotes: \"my folder\"   - one argument with spaces inside", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
     return result;
   }
 
@@ -3703,6 +3783,1082 @@ const LEVELS = [
   ]
 }
 
+,
+{
+  id: "8.3",
+  module: "02 · Command Line",
+  title: "Command Syntax · 命令句法",
+  en: "Command Syntax",
+  summary: "真正掌握了命令的句法结构：command → +argument → +option → +subcommand，能独立拆解 git commit -m \"Finish homework\" 并解释每个 token 为什么是那个角色。",
+  steps: [
+    { type: "concept",
+      title: "为什么有这一课：教过 ≠ 学会",
+      body: `
+        <p>你在反馈里说了一句非常重要的话：<strong>8.2 介绍过 command / subcommand / option / argument，但你并没有真正理解。</strong></p>
+        <p>这不是你的问题——是课程的假设错了。「出现过」和「学会了」之间隔着大量的拆、猜、错、再拆。这一课就是为这句话补课的。</p>
+        <p>毕业标准只有一条，但你必须<strong>自己</strong>做到：看到 <span class="term-inline">git commit -m "Finish homework"</span>，能拆成四个 token，并且能解释<strong>为什么</strong>各自是那个角色——不是背答案。</p>`,
+      key: "<strong>目标不是记住四种标签，而是长出「读句子的眼睛」。</strong>先读 syntax，再理解 meaning，最后才执行。"
+    },
+    { type: "concept",
+      title: "Command = 最小完整句子",
+      body: `
+        <p>语言学里，一个词可以是完整句子（「滚！」）。命令行也一样：<span class="term-inline">pwd</span> 只有一个词，但它是一条<strong>完整、可执行</strong>的命令——shell 收到它就知道要干什么。</p>
+        <p>判断标准：<strong>shell 收到这一行，能不能直接执行？</strong>能，它就是完整命令；缺了什么、shell 会反问「然后呢？」，它就不完整。</p>
+        <p>所以最小的命令结构 = 只有一个 command，后面什么都没有。这很正常，不是「省略了什么」。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="560" height="150" viewBox="0 0 560 150">
+          <rect x="30" y="45" width="500" height="60" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="280" y="82" fill="#e6edf3" font-size="18" font-family="Consolas,monospace" text-anchor="middle">pwd</text>
+          <text x="280" y="128" fill="#9aa7b4" font-size="12" text-anchor="middle">一个词 = 一条完整命令（最小合法句子）</text>
+        </svg>
+        <div class="cap">command 可以没有 argument、没有 option——它自己就是一句话。</div>
+        </div>`,
+      key: "<strong>command 是唯一必需的成分。</strong>argument 和 option 都是可选的挂件。"
+    },
+    { type: "multiselect",
+      title: "Spot the Sentences：哪些是完整命令？",
+      scenario: `下面四个「输入」，哪些会被 shell 当成<strong>完整的命令</strong>直接执行？（多选）`,
+      options: [
+        { t: "pwd", ok: true },
+        { t: "Documents", ok: false, why: "光一个词 Documents 不是命令——shell 会把它当程序名找，找不到就报 command not found。它需要一个动词（command）领着。" },
+        { t: "ls", ok: true },
+        { t: "-m", ok: false, why: "单独的 -m 是个孤儿开关：开关修饰谁？没有 command，它什么都不是。" }
+      ],
+      explain: `pwd 和 ls 是完整命令——一个 command 就够成句。<strong>Documents 和 -m 单独出现都不完整</strong>：argument 需要 command 领着，option 需要 command 修饰。句子的主角永远是 command。`,
+      hints: [
+        "判断标准：shell 收到这一行，能不能直接干活？",
+        "command 是唯一能单独成句的成分",
+        "Answer: pwd 和 ls"
+      ]
+    },
+    { type: "concept",
+      title: "Command + Argument：动词 + 宾语",
+      body: `
+        <p>下一步：<span class="term-inline">cd Documents</span>。两个词，但不是一个词带一个跟班——是<strong>动词 + 宾语</strong>的关系。</p>
+        <p><strong>cd</strong> = command（动词）：「改变目录」这个动作。<br><strong>Documents</strong> = argument（宾语）：动作的<strong>对象</strong>——对哪里做？</p>
+        <p>argument 回答的问题是：<strong>「对谁？对什么？到哪里？」</strong>没有它，动词就是句空话——cd 单独执行，shell 会反问：改成哪个目录？</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="560" height="150" viewBox="0 0 560 150">
+          <rect x="30" y="45" width="180" height="60" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="120" y="82" fill="#58a6ff" font-size="18" font-family="Consolas,monospace" text-anchor="middle">cd</text>
+          <rect x="350" y="45" width="180" height="60" rx="10" fill="#0d1117" stroke="#3fb950" stroke-width="2"/>
+          <text x="440" y="82" fill="#3fb950" font-size="18" font-family="Consolas,monospace" text-anchor="middle">Documents</text>
+          <line x1="210" y1="75" x2="350" y2="75" stroke="#9aa7b4" stroke-width="2" marker-end="url(#a4)"/>
+          <text x="280" y="60" fill="#9aa7b4" font-size="12" text-anchor="middle">作用于 →</text>
+          <text x="280" y="128" fill="#9aa7b4" font-size="12" text-anchor="middle">动词（做什么） + 宾语（对谁做）</text>
+        </svg>
+        </div>`,
+      key: "<strong>argument = 动作的对象。</strong>问自己：这个词回答了「对谁/对什么/到哪里」吗？"
+    },
+    { type: "predict",
+      title: "Anatomy：cd Documents 的角色拆解",
+      scenario: `命令 <span class="term-inline">cd Documents</span> 中，<strong>Documents</strong> 的角色是？`,
+      options: [
+        { t: "command", ok: false, why: "command 是第一个词、句子的主角——那是 cd。" },
+        { t: "argument", ok: true },
+        { t: "option", ok: false, why: "option 以 - 或 -- 开头，Documents 没有前缀。" },
+        { t: "subcommand", ok: false, why: "cd 不是「一个程序里的多种动作」型工具，它没有子命令。" }
+      ],
+      explain: `Documents 是 argument：cd 这个动作的对象——「进入哪里」。判别顺序：第一个词是 command → 带 - 前缀的是 option → 剩下跟着 command、回答「对谁/到哪」的就是 argument。`,
+      hints: [
+        "第一个词 cd 才是 command",
+        "Documents 有 - 前缀吗？没有",
+        "Answer: argument"
+      ]
+    },
+    { type: "fill",
+      title: "Fill in：补全这条 cd",
+      scenario: `你想进入 Documents 文件夹。补全命令：<br><span class="term-inline">cd ______</span>`,
+      before: ``,
+      after: ` Documents`,
+      answer: ["documents", "Documents"],
+      explain: `cd 是 command，后面缺的那个词是 argument——动作的对象。补全就是 <span class="term-inline">cd Documents</span>。`,
+      hints: [
+        "缺的是「去哪里」",
+        "Documents 这个文件夹叫什么名就填什么名",
+        "Answer: cd Documents"
+      ]
+    },
+    { type: "concept",
+      title: "Option / Flag：改变行为的开关",
+      body: `
+        <p>现在看<span class="term-inline">ls</span> 和 <span class="term-inline">ls -l</span>。动作都是「列出来」，但 <strong>-l</strong> 让列法变了：从一行一个名字，变成带权限、大小、日期的详细列表。</p>
+        <p><strong>option（选项 / flag，旗标）= 行为的开关。</strong>它不改变「做什么」，只改变「怎么做」：</p>
+        <ul>
+          <li><span class="term-inline">ls</span> → 默认行为（简单列表）</li>
+          <li><span class="term-inline">ls -l</span> → 同一个动作 + 打开「详细模式」开关</li>
+        </ul>
+        <p>flag 是旗标的直译——像开关上插的小旗子，告诉 command：<strong>这次换个方式干活。</strong></p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="170" viewBox="0 0 620 170">
+          <rect x="30" y="30" width="170" height="50" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="115" y="61" fill="#58a6ff" font-size="16" font-family="Consolas,monospace" text-anchor="middle">ls</text>
+          <text x="115" y="105" fill="#9aa7b4" font-size="12" text-anchor="middle">默认行为</text>
+          <rect x="380" y="30" width="210" height="50" rx="10" fill="#0d1117" stroke="#d29922" stroke-width="2"/>
+          <text x="485" y="61" fill="#d29922" font-size="16" font-family="Consolas,monospace" text-anchor="middle">ls -l</text>
+          <text x="485" y="105" fill="#9aa7b4" font-size="12" text-anchor="middle">同一动作，打开「详细」开关</text>
+          <line x1="200" y1="55" x2="380" y2="55" stroke="#9aa7b4" stroke-width="2" marker-end="url(#a4)"/>
+          <text x="290" y="40" fill="#9aa7b4" font-size="12" text-anchor="middle">+ option</text>
+        </svg>
+        <div class="cap">option 不选「做什么」，只选「怎么做」。</div>
+        </div>`,
+      key: "<strong>command 选动作，option 选模式。</strong>看到 - 或 -- 开头的 token：它在调行为，不是对象。"
+    },
+    { type: "predict",
+      title: "Why：为什么 -l 不是 argument？",
+      scenario: `在 <span class="term-inline">ls -l</span> 里，<strong>为什么</strong> <span class="term-inline">-l</span> 的角色是 option 而不是 argument？最准确的解释是？`,
+      options: [
+        { t: "因为它以 - 开头——这是 option 的拼写标志；语义上它改变 ls 的行为（详细模式）而不是 ls 操作的对象", ok: true },
+        { t: "因为它短", ok: false, why: "长短无关——--message 很长但也是 option。" },
+        { t: "因为它是英文字母", ok: false, why: "Documents 也是字母但它是 argument——判别靠前缀和语义，不靠长相。" },
+        { t: "因为 argument 只能是文件夹名", ok: false, why: "argument 可以是文件名、路径、文字、值——马上就会看到。" }
+      ],
+      explain: `双重判据：<strong>形式上</strong>以 - 开头；<strong>语义上</strong>它回答「怎么做」而不是「对谁做」。两条都指向 option。只背「带横线」会漏掉语义，只背语义会漏掉陌生命令——两个一起用。`,
+      hints: [
+        "形式判据 + 语义判据，各是什么？",
+        "- 前缀回答「怎么做」",
+        "Answer: 以 - 开头（形式）+ 改变行为而非操作对象（语义）"
+      ]
+    },
+    { type: "multiselect",
+      title: "Spot the Options：找出所有开关",
+      scenario: `三条命令摆在一起，先别管它们干什么——<strong>找出其中所有的 option / flag</strong>（选出所有）：<br><span class="term-inline">git commit -m "Fix typo"</span>　<span class="term-inline">rm -r oldfolder</span>　<span class="term-inline">mkdir test</span>`,
+      options: [
+        { t: "-m", ok: true },
+        { t: "-r", ok: true },
+        { t: "commit", ok: false, why: "commit 是 subcommand——它选「做什么动作」，不是开关。" },
+        { t: "\"Fix typo\"", ok: false, why: "它是被操作的内容（argument），引号只负责把空格粘成一个词。" },
+        { t: "test", ok: false, why: "argument——mkdir 动作的对象。" },
+        { t: "git / rm / mkdir", ok: false, why: "这三个是 command（句子的主角），在三条命令里各占第一个位置。" }
+      ],
+      explain: `option 只有 <strong>-m</strong> 和 <strong>-r</strong> 两个。横线前缀 + 「改变行为」语义。注意三个主角 git / rm / mkdir 都是 command，别被「生词」晃了眼——<strong>第一个词永远是 command</strong>。`,
+      hints: [
+        "逐条看：第一个词是 command，带 - 的是 option",
+        "三条命令里的 - 开头的 token",
+        "Answer: -m 和 -r"
+      ]
+    },
+    { type: "concept",
+      title: "Command + Option + Argument：三要素同句",
+      body: `
+        <p>把前两块拼起来：<span class="term-inline">rm -r oldfolder</span>。一条命令里同时住着三种角色：</p>
+        <ul>
+          <li><strong>rm</strong> = command：动作——删除</li>
+          <li><strong>-r</strong> = option：模式——递归地（连文件夹带内容一起）</li>
+          <li><strong>oldfolder</strong> = argument：对象——删谁</li>
+        </ul>
+        <p>读法：<strong>「删除，递归模式，目标是 oldfolder。」</strong>三个词各答一个问题：做什么、怎么做、对谁做。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="150" viewBox="0 0 660 150">
+          <rect x="20" y="45" width="150" height="60" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="95" y="82" fill="#58a6ff" font-size="18" font-family="Consolas,monospace" text-anchor="middle">rm</text>
+          <text x="95" y="125" fill="#58a6ff" font-size="11" text-anchor="middle">command · 做什么</text>
+          <rect x="230" y="45" width="150" height="60" rx="10" fill="#0d1117" stroke="#d29922" stroke-width="2"/>
+          <text x="305" y="82" fill="#d29922" font-size="18" font-family="Consolas,monospace" text-anchor="middle">-r</text>
+          <text x="305" y="125" fill="#d29922" font-size="11" text-anchor="middle">option · 怎么做</text>
+          <rect x="440" y="45" width="200" height="60" rx="10" fill="#0d1117" stroke="#3fb950" stroke-width="2"/>
+          <text x="540" y="82" fill="#3fb950" font-size="18" font-family="Consolas,monospace" text-anchor="middle">oldfolder</text>
+          <text x="540" y="125" fill="#3fb950" font-size="11" text-anchor="middle">argument · 对谁做</text>
+        </svg>
+        <div class="cap">三个角色 = 三个问题：做什么 · 怎么做 · 对谁做。</div>
+        </div>`,
+      key: "<strong>读命令的顺序：command → option → argument。各回答：做什么、怎么做、对谁做。</strong>"
+    },
+    { type: "predict",
+      title: "Anatomy：rm -r oldfolder 逐词拆解",
+      scenario: `<span class="term-inline">rm -r oldfolder</span> 中，<strong>-r</strong> 的角色是？<strong>oldfolder</strong> 的角色是？`,
+      options: [
+        { t: "-r 是 option，oldfolder 是 argument", ok: true },
+        { t: "-r 是 argument，oldfolder 是 option", ok: false, why: "-r 带横线且改变删除的方式；oldfolder 没有横线、是删除的对象——正好相反。" },
+        { t: "两个都是 argument", ok: false, why: "-r 是行为开关：rm 没有它也能删文件。它不改变「删谁」，只改变「怎么删」。" },
+        { t: "-r 是 subcommand", ok: false, why: "rm 不是多动作工具——它没有子命令菜单。" }
+      ],
+      explain: `-r 打开「递归」模式（怎么做），oldfolder 是被删的对象（对谁做）。<strong>检验技巧：把 token 去掉看句子还成不成立。</strong>去掉 oldfolder，rm 不知道该删谁——它是必需的宾语；去掉 -r，句子仍成立（只是不让删文件夹了）——它是可选的开关。`,
+      hints: [
+        "把每个词去掉试试：句子还完整吗？",
+        "-r 带横线、改变方式；oldfolder 是对象",
+        "Answer: -r 是 option，oldfolder 是 argument"
+      ]
+    }
+    ,
+    { type: "concept",
+      title: "Subcommand：一个程序的一堆动作",
+      body: `
+        <p>有些程序是<strong>工具箱</strong>，不是单一动作的工具。Git 就是典型：它一个程序里装着一整套动作——</p>
+        <p><span class="term-inline">git status</span>（看状态）、<span class="term-inline">git add</span>（暂存）、<span class="term-inline">git commit</span>（提交）、<span class="term-inline">git log</span>（历史）、<span class="term-inline">git clone</span>（克隆）。</p>
+        <p>第二个词（status / add / commit / log / clone）就是 <strong>subcommand（子命令）</strong>：它从工具箱里<strong>挑出这一次要做的动作</strong>。</p>
+        <p><strong>为什么是 git commit 而不是一堆独立命令（gitcommit、gcommit）？</strong>因为这些动作共享同一个程序的「家」：同一套配置、同一个仓库上下文、同一份文档。<span class="term-inline">git</span> 是入口：<strong>「我要用 git 这个工具」</strong>；subcommand 是菜单：<strong>「用它的哪个功能」</strong>。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="250" viewBox="0 0 620 250">
+          <rect x="230" y="15" width="160" height="44" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="310" y="43" fill="#58a6ff" font-size="16" font-family="Consolas,monospace" text-anchor="middle">git</text>
+          <text x="310" y="76" fill="#9aa7b4" font-size="11" text-anchor="middle">program = 工具箱</text>
+          <line x1="310" y1="59" x2="90" y2="105" stroke="#3fb950" stroke-width="1.5"/>
+          <line x1="310" y1="59" x2="200" y2="105" stroke="#3fb950" stroke-width="1.5"/>
+          <line x1="310" y1="59" x2="310" y2="105" stroke="#3fb950" stroke-width="1.5"/>
+          <line x1="310" y1="59" x2="420" y2="105" stroke="#3fb950" stroke-width="1.5"/>
+          <line x1="310" y1="59" x2="530" y2="105" stroke="#3fb950" stroke-width="1.5"/>
+          <g font-family="Consolas,monospace" font-size="13" fill="#3fb950" text-anchor="middle">
+            <rect x="40" y="105" width="100" height="34" rx="8" fill="#161b22" stroke="#3fb950"/><text x="90" y="127">status</text>
+            <rect x="150" y="105" width="100" height="34" rx="8" fill="#161b22" stroke="#3fb950"/><text x="200" y="127">add</text>
+            <rect x="260" y="105" width="100" height="34" rx="8" fill="#161b22" stroke="#3fb950"/><text x="310" y="127">commit</text>
+            <rect x="370" y="105" width="100" height="34" rx="8" fill="#161b22" stroke="#3fb950"/><text x="420" y="127">log</text>
+            <rect x="480" y="105" width="100" height="34" rx="8" fill="#161b22" stroke="#3fb950"/><text x="530" y="127">clone</text>
+          </g>
+          <text x="310" y="190" fill="#9aa7b4" font-size="12" text-anchor="middle">subcommand = 从工具箱里挑动作（菜单）</text>
+          <text x="310" y="218" fill="#e6edf3" font-size="13" font-family="Consolas,monospace" text-anchor="middle">git + commit = 「用 git 工具，做 commit 这个动作」</text>
+        </svg>
+        <div class="cap">一个 program，一棵动作菜单。subcommand 不是参数——它是动作的名字。</div>
+        </div>`,
+      key: "<strong>subcommand = 工具箱里的菜单项。</strong>第一个词说「用哪个工具」，第二个词说「做哪个动作」。"
+    },
+    { type: "predict",
+      title: "Why：为什么 Git 要这样设计？",
+      scenario: `Git 把五个动作做成 <span class="term-inline">git status / git add / git commit / git log / git clone</span>（program + subcommand），而不是五个完全独立的程序（gitstatus、gitcommit……）。<strong>最合理的理由是？</strong>`,
+      options: [
+        { t: "这些动作共享同一个程序和它的上下文（配置、仓库、文档）——git 是入口，subcommand 是从同一个工具箱里挑动作", ok: true },
+        { t: "因为单独的程序名太长了", ok: false, why: "长度可以缩短——这不是设计的本质理由。" },
+        { t: "因为 shell 不允许出现新命令", ok: false, why: "shell 随时能装新程序——不存在这个限制。" },
+        { t: "纯属历史巧合，没有原因", ok: false, why: "有规律：凡是「一个程序多种动作」的工具几乎都这样（docker run、npm install、apt update）——这是通用的组织方式。" }
+      ],
+      explain: `答案 A。而且注意最后那个线索：<strong>这是通用模式</strong>——docker run、npm install、python -m pip 都是「program + subcommand」。见到「第一个词是工具、第二个词像动词」的结构，就要警觉：这很可能是 subcommand。`,
+      hints: [
+        "这五个动作有什么共同点？",
+        "它们住在同一个程序、共享同一套配置",
+        "Answer: 共享同一个程序的上下文，subcommand 是从工具箱挑动作"
+      ]
+    },
+    { type: "matching",
+      title: "Matching：git 的动作菜单",
+      scenario: `把每个 subcommand 连到它的动作含义。`,
+      pairs: [
+        { l: "git status", r: "查看仓库当前状态" },
+        { l: "git add", r: "把改动放进暂存区" },
+        { l: "git commit", r: "把暂存的内容提交成历史" },
+        { l: "git log", r: "查看提交历史" },
+        { l: "git clone", r: "从远程复制一份仓库到本地" }
+      ],
+      choices: ["查看仓库当前状态", "把改动放进暂存区", "把暂存的内容提交成历史", "查看提交历史", "从远程复制一份仓库到本地", "删除远程仓库", "安装 Git"],
+      explain: `五个动作都是「git 这个工具箱里的一项功能」。现在不用记它们的细节（Module D 会逐个教），只要记住结构：<strong>git + 动作名</strong>。`,
+      key: "subcommand 选动作，Module D 再教每个动作的细节。",
+      hints: [
+        "按字面猜：log 是日志、status 是状态",
+        "clone 是克隆——复制一份",
+        "Answer: status→状态 / add→暂存 / commit→提交 / log→历史 / clone→克隆"
+      ]
+    },
+    { type: "concept",
+      title: "四层全拆解：git commit -m \"hello\"",
+      body: `
+        <p>终极例子来了，四层结构一次全齐：<span class="term-inline">git commit -m "hello"</span></p>
+        <ul>
+          <li><strong>git</strong> = program：用哪个工具（工具箱）</li>
+          <li><strong>commit</strong> = subcommand：做哪个动作（从菜单挑）</li>
+          <li><strong>-m</strong> = option：怎么做（用 -m 指定「提交信息」这个开关）</li>
+          <li><strong>"hello"</strong> = argument：用什么值（这条提交的信息内容）</li>
+        </ul>
+        <p>特别注意最后两层的关系：<strong>"hello" 是挂在 -m 下面的 argument</strong>——「这个开关需要的值」。-m 说「我要指定信息」，"hello" 说「信息是这个」。两个必须成对出现，缺一个都报错。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="240" viewBox="0 0 660 240">
+          <rect x="270" y="12" width="120" height="40" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="330" y="38" fill="#58a6ff" font-size="15" font-family="Consolas,monospace" text-anchor="middle">git</text>
+          <text x="418" y="37" fill="#58a6ff" font-size="11">program · 哪个工具</text>
+          <rect x="250" y="70" width="160" height="40" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="330" y="96" fill="#3fb950" font-size="15" font-family="Consolas,monospace" text-anchor="middle">commit</text>
+          <text x="440" y="95" fill="#3fb950" font-size="11">subcommand · 哪个动作</text>
+          <rect x="150" y="140" width="120" height="40" rx="10" fill="#161b22" stroke="#d29922" stroke-width="1.5"/>
+          <text x="210" y="166" fill="#d29922" font-size="15" font-family="Consolas,monospace" text-anchor="middle">-m</text>
+          <text x="60" y="165" fill="#d29922" font-size="11" text-anchor="end">option · 哪个开关</text>
+          <rect x="360" y="140" width="150" height="40" rx="10" fill="#161b22" stroke="#c98f5f" stroke-width="1.5"/>
+          <text x="435" y="166" fill="#c98f5f" font-size="15" font-family="Consolas,monospace" text-anchor="middle">&quot;hello&quot;</text>
+          <text x="530" y="165" fill="#c98f5f" font-size="11">argument · 开关的值</text>
+          <line x1="330" y1="52" x2="330" y2="70" stroke="#9aa7b4" stroke-width="1.5"/>
+          <line x1="310" y1="110" x2="220" y2="140" stroke="#9aa7b4" stroke-width="1.5"/>
+          <line x1="352" y1="110" x2="430" y2="140" stroke="#9aa7b4" stroke-width="1.5"/>
+          <path d="M 270 160 L 360 160" stroke="#9aa7b4" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+          <text x="315" y="205" fill="#9aa7b4" font-size="12" text-anchor="middle">&quot;hello&quot; 挂在 -m 下面：它是这个 option 的值</text>
+        </svg>
+        <div class="cap">四层各答一问：哪个工具 · 哪个动作 · 哪个开关 · 什么值。</div>
+        </div>`,
+      key: "<strong>-m 和 \"hello\" 是父子关系：</strong>option 宣布「我要这个设置」，argument 交出「设置的具体值」。"
+    },
+    { type: "predict",
+      title: "Anatomy：\"hello\" 到底是谁的 argument？",
+      scenario: `在 <span class="term-inline">git commit -m "hello"</span> 里，<strong>"hello"</strong> 最直接的角色是？`,
+      options: [
+        { t: "-m 这个 option 的 argument（开关所需要的值）", ok: true },
+        { t: "git 的 argument", ok: false, why: "git 的「宾语」是 commit——它已经选完了。hello 离 git 隔了两层，归最近的开关管。" },
+        { t: "commit 的 argument", ok: false, why: "commit 是动作名，动作名后面跟的是它的 option，不是它的宾语。" },
+        { t: "option", ok: false, why: "它没有 - 前缀；它是被交给 -m 的内容——是数据，不是开关。" }
+      ],
+      explain: `答案是 A：option 也可以「吃」argument。<strong>-m 宣布「我要指定提交信息」，"hello" 就是这条信息的具体值。</strong>判断归属的诀窍：看它紧紧跟着谁——紧跟 -m，就是 -m 的值。`,
+      hints: [
+        "它紧跟在哪个词后面？",
+        "option 宣布设置，谁来交值？",
+        "Answer: -m 的 argument（这个开关的值）"
+      ]
+    },
+    { type: "concept",
+      title: "Argument 不一定是文件名",
+      body: `
+        <p>很多人（包括最初的设计文档）下意识以为 argument = 文件名。用三个例子拆掉这个假设：</p>
+        <ul>
+          <li><span class="term-inline">cd Documents</span> —— Documents 是 <strong>文件夹名</strong>（路径）</li>
+          <li><span class="term-inline">git commit -m "hello"</span> —— "hello" 是<strong>一段文字</strong>（提交信息）</li>
+          <li><span class="term-inline">code .</span> —— . 是一个<strong>特殊符号</strong>，意思是「当前文件夹」</li>
+        </ul>
+        <p>三个 argument 没有一个长得一样，但角色完全相同：<strong>交给 command 的具体数据——「对谁做 / 用什么值」。</strong>argument 的判别从来不是看长相，而是看它在句子里回答什么问题。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="180" viewBox="0 0 640 180">
+          <g font-family="Consolas,monospace" font-size="14" text-anchor="middle">
+            <rect x="20" y="30" width="180" height="44" rx="9" fill="#161b22" stroke="#3fb950"/><text x="110" y="58" fill="#e6edf3">cd Documents</text>
+            <rect x="230" y="30" width="190" height="44" rx="9" fill="#161b22" stroke="#3fb950"/><text x="325" y="58" fill="#e6edf3">-m "hello"</text>
+            <rect x="450" y="30" width="150" height="44" rx="9" fill="#161b22" stroke="#3fb950"/><text x="525" y="58" fill="#e6edf3">code .</text>
+          </g>
+          <g font-size="12" fill="#9aa7b4" text-anchor="middle">
+            <text x="110" y="100">文件夹名（路径）</text>
+            <text x="325" y="100">一段文字（值）</text>
+            <text x="525" y="100">特殊符号（当前位置）</text>
+            <text x="320" y="145" fill="#e6edf3">三个 argument 长得完全不同，但都是「交给 command 的具体数据」</text>
+          </g>
+        </svg>
+        </div>`,
+      key: "<strong>argument = 回答「对谁 / 用什么值」的任何数据。</strong>文件夹、文件、路径、文字、符号——都可以。"
+    },
+    { type: "predict",
+      title: "Anatomy：code . 里的 \".\"",
+      scenario: `命令 <span class="term-inline">code .</span> 中，<strong>.</strong> 的角色是？`,
+      options: [
+        { t: "argument——「对谁操作」的值：这里的 . 代表「当前文件夹」", ok: true },
+        { t: "option", ok: false, why: "option 以 - 或 -- 开头；. 没有前缀。" },
+        { t: "subcommand", ok: false, why: "code 不是工具箱型程序，没有动作菜单。" },
+        { t: "标点，不属于命令的一部分", ok: false, why: "它是 token 之一：code 收到它才知道要打开哪里。删掉它，命令就缺了宾语。" }
+      ],
+      explain: `. 是 argument：它回答「打开哪里」——答案是「当前这个文件夹」。<strong>一个符号也能当完整的 argument。</strong>这正是上一节的核心：argument 判别看「回答什么问题」，不看长相。`,
+      hints: [
+        "code 需要知道「打开哪里」——谁回答了这个问题？",
+        ". 有 - 前缀吗？",
+        "Answer: argument（值 = 当前文件夹）"
+      ]
+    },
+    { type: "concept",
+      title: "语法由程序自己定：pattern，不是法律",
+      body: `
+        <p>最后必须拆掉一个隐患：<strong>「command + subcommand + option + argument」是常见模式，不是每条命令都遵守的语法法律。</strong></p>
+        <p>每个程序自己定义自己的语法（syntax / grammar）：</p>
+        <ul>
+          <li><span class="term-inline">pwd</span> —— 一个词，什么都不带，合法</li>
+          <li><span class="term-inline">python --version</span> —— program + option，没有 subcommand，也合法</li>
+          <li><span class="term-inline">git commit -m "hello"</span> —— 四层全齐，合法</li>
+          <li><span class="term-inline">echo hello world</span> —— program + 两个 argument，没有 option，合法</li>
+        </ul>
+        <p>你的四件套是<strong>读句子的脚手架</strong>——遇到陌生命令时先尝试套这个模式；套不上，就是这个程序自己定了别的规矩，去查它的 --help。</p>`,
+      key: "<strong>四件套是 pattern（常见模式），不是 law（法律）。</strong>不同工具的语法可以不同；读法优先于背法。"
+    },
+    { type: "predict",
+      title: "Check：没有 subcommand 也正常吗？",
+      scenario: `<span class="term-inline">python --version</span> 只有两个词，<strong>没有 subcommand</strong>。这说明？`,
+      options: [
+        { t: "完全正常——python 是单动作程序，--version 是 option；四件套是常见模式，不是必须凑齐的清单", ok: true },
+        { t: "说明这条命令打错了", ok: false, why: "缺 subcommand 不是错误——单动作程序本来就没有子命令菜单。" },
+        { t: "说明 python 是坏的程序", ok: false, why: "大多数程序（ls、pwd、python、code）都不是工具箱型。" },
+        { t: "说明 --version 其实是 subcommand", ok: false, why: "-- 前缀是 option 的形式标志；「版本」也不是动作。" }
+      ],
+      explain: `正常得不能再正常。<strong>「没有 subcommand」≠「不完整」。</strong>只有工具箱型程序（git、docker、npm）才有子命令；单动作程序天然只有两层。检验标准始终是：这个程序需要挑动作吗？`,
+      hints: [
+        "python 需要「挑动作」吗？",
+        "四件套是模式不是清单",
+        "Answer: 完全正常——模式不是必须凑齐的清单"
+      ]
+    },
+    { type: "matching",
+      title: "句法解析大练习：命令 ↔ 结构",
+      scenario: `五条命令，五条结构描述——连起来。`,
+      pairs: [
+        { l: "cd Documents", r: "command + argument（进哪里）" },
+        { l: "ls -l", r: "command + option（怎么列）" },
+        { l: "git status", r: "program + subcommand（哪个动作）" },
+        { l: "rm -r old", r: "command + option + argument（怎么做 + 对谁做）" },
+        { l: "git commit -m \"hi\"", r: "program + subcommand + option + argument（四层全齐）" }
+      ],
+      choices: [
+        "command + argument（进哪里）",
+        "command + option（怎么列）",
+        "program + subcommand（哪个动作）",
+        "command + option + argument（怎么做 + 对谁做）",
+        "program + subcommand + option + argument（四层全齐）",
+        "command + subcommand（不存在的结构）"
+      ],
+      explain: `五条命令恰好是五种合法结构——从两层到四层都有。<strong>注意干扰项「command + subcommand」是不存在的：</strong>subcommand 只住在工具箱型 program 下面。`,
+      key: "五种结构都合法——层数由程序决定，不由模板决定。",
+      hints: [
+        "先找带 - 的（option），再找工具箱型 program（git）",
+        "剩下的是 command + argument",
+        "Answer: cd→两层 / ls -l→两层 / git status→program+sub / rm -r old→三层 / git commit -m→四层"
+      ]
+    },
+    { type: "multiselect",
+      title: "Unknown Command Challenge 1：陌生命令",
+      scenario: `你没学过这个命令，也不要求知道它干什么——<strong>只分析语法结构</strong>：<br><span class="term-inline">somecommand action --option value</span><br>下面哪些说法是对的？（选出所有）`,
+      options: [
+        { t: "somecommand 是 program / command（第一个词）", ok: true },
+        { t: "action 很可能是 subcommand——「工具箱里挑动作」的位置", ok: true },
+        { t: "--option 是 option（双横线长形式）", ok: true },
+        { t: "value 是 --option 的值，也是 argument", ok: true },
+        { t: "action 是 argument", ok: false, why: "它站在「program 之后的第二个词」位置，长得像动词——更像 subcommand；value 才是 argument。" },
+        { t: "这条命令有语法错误，因为它没用 git", ok: false, why: "四件套是通用模式，不是 git 专属——任何工具都可以这么组织。" }
+      ],
+      explain: `全拆：<strong>somecommand</strong> = program，<strong>action</strong> = subcommand（挑动作的位置），<strong>--option</strong> = option（双横线长形式），<strong>value</strong> = 交给 --option 的 argument。<strong>你没学过它，但你读出了它的结构——这就是本关要的能力。</strong>`,
+      hints: [
+        "第一个词、- 前缀、剩下的——逐个归位",
+        "第二个词站在「挑动作」的位置",
+        "Answer: 前四句全对"
+      ]
+    },
+    { type: "multiselect",
+      title: "Unknown Command Challenge 2：更真实的命令",
+      scenario: `一条你可能真会见到的命令（现在不要求懂它的意思）：<br><span class="term-inline">docker run -d --name web nginx</span><br>哪些判断是正确的？（选出所有）`,
+      options: [
+        { t: "docker 是 program", ok: true },
+        { t: "run 是 subcommand", ok: true },
+        { t: "-d 是 option（单横线短形式）", ok: true },
+        { t: "--name 是 option（双横线长形式），web 是交给它的 argument", ok: true },
+        { t: "nginx 是 argument——动作的最终对象", ok: true },
+        { t: "web 是 option，因为它没有 - 前缀", ok: false, why: "web 紧跟 --name：它是 --name 的值（argument）。没有横线恰恰是 argument 的形式特征——判别看位置和语义。" }
+      ],
+      explain: `完整解剖：<strong>docker</strong>（program）<strong>run</strong>（subcommand）<strong>-d</strong>（option）<strong>--name web</strong>（option + 它的 argument）<strong>nginx</strong>（argument，动作的对象）。一句话读法：<strong>「用 docker 工具，执行 run 动作，后台模式，命名为 web，对象 nginx。」</strong>`,
+      hints: [
+        "先找横线词（-d、--name），再看谁紧跟它们",
+        "剩下的词按位置归位",
+        "Answer: 前五句全对"
+      ]
+    },
+    { type: "fill",
+      title: "Build a Command：反向组装",
+      scenario: `给你角色，组装命令：<br>Program: <span class="term-inline">git</span>　Subcommand: <span class="term-inline">commit</span>　Option: <span class="term-inline">-m</span>　Argument: <span class="term-inline">"hello"</span><br>把这条命令完整打出来（含引号）：`,
+      before: ``,
+      after: ``,
+      answer: ['git commit -m "hello"', "git commit -m 'hello'"],
+      explain: `组装顺序就是读序：program → subcommand → option → argument，得 <span class="term-inline">git commit -m "hello"</span>。<strong>引号不能省</strong>——hello 里没有空格时省不省都能跑，但养成带引号的习惯，遇到带空格的句子才不会翻车。`,
+      hints: [
+        "按 program → subcommand → option → argument 的顺序",
+        "-m 和它的值之间是空格",
+        "Answer: git commit -m \"hello\""
+      ]
+    },
+    { type: "predict",
+      title: "Why：为什么 commit 是 subcommand？",
+      scenario: `最后两道「为什么」题，检验你是否真的理解了。在 <span class="term-inline">git commit</span> 里，<strong>为什么</strong> commit 是 subcommand 而不是 argument？`,
+      options: [
+        { t: "因为它从 git 这个动作菜单里挑出了「提交」这个动作——它是动作名，不是被操作的数据", ok: true },
+        { t: "因为它在 git 后面", ok: false, why: "「在后面」也可能是 argument（git add 的某个文件呢？）——位置不够，语义才是判据。" },
+        { t: "因为它没有 - 前缀", ok: false, why: "没有横线的也可能是 argument（Documents、nginx）。前缀只能排除 option，不能认定 subcommand。" },
+        { t: "因为所有第二个词都是 subcommand", ok: false, why: "cd Documents 的第二个词就是 argument。第二个词是菜单动词还是数据，得看这个程序是不是工具箱。" }
+      ],
+      explain: `判据是语义角色：<strong>commit 回答「做什么动作」，argument 回答「对谁 / 用什么值」。</strong>commit 是动作名（git 的菜单项），所以它是 subcommand。形式（位置、前缀）只是辅助线索。`,
+      hints: [
+        "commit 回答「做什么」还是「对谁做」？",
+        "它是 git 菜单里的一项动作",
+        "Answer: 它从 git 的菜单里挑出了动作——是动作名，不是数据"
+      ]
+    },
+    { type: "predict",
+      title: "Why：为什么 -m 是 option 而 \"hello\" 是 argument？",
+      scenario: `在 <span class="term-inline">git commit -m "hello"</span> 里，<strong>为什么</strong> -m 是 option 而 "hello" 是 argument？`,
+      options: [
+        { t: "-m 宣布一个设置（我要指定提交信息）并改变 commit 的行为；\"hello\" 是被交给这个设置的具体值——开关 vs 数据", ok: true },
+        { t: "-m 短所以是 option", ok: false, why: "--message 很长但也是 option——长短无关。" },
+        { t: "\"hello\" 有引号所以是 argument", ok: false, why: "引号只负责粘空格，不负责定角色——没引号的词也可以是 argument。" },
+        { t: "因为它俩位置不同", ok: false, why: "位置接近、语义不同：一个是行为开关，一个是开关的值。" }
+      ],
+      explain: `<strong>-m = 开关（改变行为：用这种方式提交），"hello" = 数据（这个开关的值）。</strong>把 -m 删掉，commit 换种方式干活；把 "hello" 删掉，-m 就悬空报错——这就是开关与数据的本质区别。`,
+      hints: [
+        "分别删掉它们，看命令发生什么",
+        "开关改变行为，值喂给开关",
+        "Answer: -m 是行为开关，\"hello\" 是交给开关的值"
+      ]
+    },
+    { type: "concept",
+      title: "五步自问法：读任何命令的协议",
+      body: `
+        <p>把这一课压缩成一张随身携带的卡片。看到<strong>任何</strong>命令——见过的、没见过的——按顺序问五个问题：</p>
+        <ol>
+          <li><strong>这个程序是谁？</strong>（第一个 token = program / command）</li>
+          <li><strong>它有没有动作菜单？</strong>（第二个词像动词 → subcommand）</li>
+          <li><strong>这个 token 是在选动作吗？</strong>（是 → subcommand）</li>
+          <li><strong>这个 token 是在改变行为吗？</strong>（- / -- 前缀 + 调模式 → option）</li>
+          <li><strong>这个 token 是具体的数据 / 对象吗？</strong>（回答「对谁 / 用什么值」→ argument）</li>
+        </ol>
+        <p>执行顺序也由此而定：<strong>先读 syntax（结构）→ 再理解 meaning（意思）→ 最后才执行（回车）。</strong>顺序不能反——没读懂结构的执行是赌。`,
+      key: "<strong>先读结构，再懂意思，最后执行。</strong>五步自问法适用于你见过的和没见过的一切命令。"
+    },
+    { type: "terminal",
+      title: "Graduation：亲手提交这条命令",
+      goal: `两步毕业：先 <code>git init</code> 把当前文件夹变成虚拟仓库，再敲出毕业命令 <code>git commit -m "Finish homework"</code>。敲之前，先在脑子里说出四个 token 各自的角色。`,
+      background: `这是本关的最终检验：不是选择题，是<strong>亲手输入</strong>。三个看点：① git 真实存在于 PATH 里（Level 6 的户口理论）；② 没有 .git 时 git 会拒绝工作——所以先 init 给它一个家（Level 6 你已经见过那个著名报错）；③ 引号让 Finish homework 成为<strong>一个</strong> argument——敲完看终端记录验证你的预测。`,
+      hints: [
+        "第一步：git + 空格 + init（给 git 一个家）",
+        "program 是谁？subcommand 是谁？四个 token 各是什么角色？",
+        "Answer: git init → git commit -m \"Finish homework\""
+      ],
+      validate: (r, s) => !r.err && r.cmd === "git" && r.args[0] === "commit" && r.args[1] === "-m" && r.args[2] === "Finish homework" && r.args.length === 3 && getNode(s.fs, s.cwd.concat(".git")) !== undefined,
+      success: "终端打印 [main (root-commit) a1b2c3d] Finish homework——提交成功。四个 token 一个不少，带引号的参数被当成一个——句法你已经真懂了。",
+      internals: "git init 在 cwd 建 .git 目录（文件夹升级成 repository）。然后：shell 分词 git / commit / -m / \"Finish homework\"（引号内空格不拆）→ PATH 找到 git.exe → commit 分发动作 → -m 开启「指定信息」模式 → \"Finish homework\" 作为该模式的值传入 → 快照写入 .git。整条链路每一步你都学过了。",
+      breakdown: [
+        { token: "git init", label: "program + subcommand", text: "init 是 git 菜单里的「建仓库」动作——先给 git 一个家。" },
+        { token: "git", label: "program 程序", text: "第一个词。PATH 清单里找到的 git.exe——工具箱本身。" },
+        { token: "commit", label: "subcommand 子命令", text: "git 动作菜单里的一项：把当前快照存成历史。" },
+        { token: "-m", label: "option / flag 选项", text: "开关：「这次用 -m 方式指定提交信息」。" },
+        { token: "\"Finish homework\"", label: "argument 参数", text: "-m 的值：提交信息的具体内容。引号保证它是一个 token。" }
+      ]
+    }
+  ]
+}
+,
+{
+  id: "8.4",
+  module: "02 · Command Line",
+  title: "Command Line in Practice · 动手写出命令",
+  en: "Command Line in Practice",
+  summary: "从「读懂命令」进阶到「写出命令」：导航、. 与 ..、绝对/相对路径、引号与空格、通配符、option 组合、pipe 概念，全部在 terminal 任务里亲手练过。",
+  steps: [
+    { type: "concept",
+      title: "练习赛开幕：从读懂到写出",
+      body: `
+        <p>8.3 给了你读命令的眼睛。这一课换一个目标：<strong>让你自己能写出一条命令。</strong></p>
+        <p>规则变化：concept 变少、terminal 变多。每个任务都<strong>要求你亲手输入</strong>——Hint 只是脚手架，抄答案不算数。写错了非常好——这一课的错误都是免费的。</p>
+        <p>全部内容仍然在你的 Windows + PowerShell 环境里，一条 Bash 都不会混进来（那是 8.5 之后的故事）。</p>`,
+      key: "<strong>写出一条命令的检验标准：不查答案，自己敲，敲完能解释。</strong>"
+    },
+    { type: "concept",
+      title: "导航四件套：Where / What / Go / Make",
+      body: `
+        <p>先 30 秒速览你已有的武器，按它们回答的问题记：</p>
+        <ul>
+          <li><span class="term-inline">pwd</span> —— Where am I？（我在哪）</li>
+          <li><span class="term-inline">ls</span> —— What's here？（这里有什么）</li>
+          <li><span class="term-inline">cd</span> —— Take me there（带我去那）</li>
+          <li><span class="term-inline">mkdir</span> —— Make a home（建一个新文件夹）</li>
+        </ul>
+        <p>四个问题连起来就是日常导航的循环：<strong>我在哪 → 有什么 → 去那 → 建家。</strong>接下来全部任务都只是这个循环的变奏。</p>`,
+      key: "pwd 报位置、ls 报库存、cd 移动、mkdir 安家。",
+      visual: `
+        <div class="diagram">
+        <svg width="600" height="120" viewBox="0 0 600 120">
+          <g font-family="Consolas,monospace" font-size="14" text-anchor="middle">
+            <rect x="20" y="30" width="120" height="46" rx="9" fill="#161b22" stroke="#58a6ff"/><text x="80" y="59" fill="#58a6ff">pwd</text>
+            <rect x="165" y="30" width="120" height="46" rx="9" fill="#161b22" stroke="#58a6ff"/><text x="225" y="59" fill="#58a6ff">ls</text>
+            <rect x="310" y="30" width="120" height="46" rx="9" fill="#161b22" stroke="#58a6ff"/><text x="370" y="59" fill="#58a6ff">cd</text>
+            <rect x="455" y="30" width="130" height="46" rx="9" fill="#161b22" stroke="#58a6ff"/><text x="520" y="59" fill="#58a6ff">mkdir</text>
+          </g>
+          <g font-size="11" fill="#9aa7b4" text-anchor="middle">
+            <text x="80" y="100">我在哪</text><text x="225" y="100">有什么</text><text x="370" y="100">去那</text><text x="520" y="100">建家</text>
+          </g>
+        </svg>
+        </div>`
+    },
+    { type: "terminal",
+      title: "热身：cd Documents → pwd",
+      goal: `先 <code>cd Documents</code> 进入 Documents，再 <code>pwd</code> 确认你的位置。两个命令都亲手敲。`,
+      background: `热身赛。注意执行 pwd 时终端打印的完整路径——那就是你的「坐标」。预测一下：它会以什么开头？`,
+      hints: [
+        "第一个命令：cd + 空格 + 文件夹名",
+        "第二个命令：三个字母",
+        "Answer: cd Documents 然后 pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA\\Documents",
+      success: "pwd 打印 C:\\Users\\YOGA\\Documents——位置确认。导航循环转起来了。",
+      internals: "cd 改写了进程的 cwd（当前工作目录）；pwd 把这个内部状态读出来给你看。提示符 PS C:\\...\\Documents&gt; 里的路径也是同一个状态。",
+      breakdown: [
+        { token: "cd Documents", label: "command + argument", text: "change directory，对象是 Documents。" },
+        { token: "pwd", label: "command", text: "print working directory，读回当前位置。" }
+      ]
+    },
+    { type: "concept",
+      title: ". 和 ..：每个文件夹的两个隐藏邻居",
+      body: `
+        <p>文件树上，<strong>每个文件夹都有两个看不见的成员</strong>：</p>
+        <ul>
+          <li><span class="term-inline">.</span>（一个点）= <strong>我自己</strong>，当前这个文件夹</li>
+          <li><span class="term-inline">..</span>（两个点）= <strong>我爹</strong>，父文件夹（上一层）</li>
+        </ul>
+        <p>所以 <span class="term-inline">cd ..</span> 的意思是「去上一层」——<strong>不是删除、不是返回键，是移动</strong>。文件资源管理器里点「↑ 上移」做的事，在 terminal 里就是 cd ..。</p>
+        <p>它们也能当 argument 用在别的命令里：<span class="term-inline">code .</span> 的 . 你已经在 8.3 拆过了。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="620" height="190" viewBox="0 0 620 190">
+          <g font-family="Consolas,monospace" font-size="13" text-anchor="middle">
+            <rect x="230" y="15" width="160" height="38" rx="8" fill="#161b22" stroke="#58a6ff"/><text x="310" y="40" fill="#58a6ff">C:\Users\YOGA</text>
+            <line x1="310" y1="53" x2="160" y2="95" stroke="#9aa7b4" stroke-width="1.5"/>
+            <line x1="310" y1="53" x2="460" y2="95" stroke="#9aa7b4" stroke-width="1.5"/>
+            <rect x="80" y="95" width="160" height="38" rx="8" fill="#161b22" stroke="#3fb950"/><text x="160" y="120" fill="#3fb950">Documents</text>
+            <rect x="380" y="95" width="160" height="38" rx="8" fill="#161b22" stroke="#3fb950"/><text x="460" y="120" fill="#3fb950">Pictures</text>
+          </g>
+          <g font-size="12" fill="#9aa7b4" text-anchor="middle">
+            <text x="160" y="160">在 Documents 里：.. = YOGA（上一层）</text>
+            <text x="460" y="160">. = 我自己</text>
+          </g>
+        </svg>
+        <div class="cap">.. 永远指向父文件夹——它是「回家」的相对路径。</div>
+        </div>`,
+      key: "<strong>. = 这里，.. = 上一层。</strong>cd .. 是移动，不是撤销。"
+    },
+    { type: "predict",
+      title: "Prediction：cd .. 之后你在哪？",
+      scenario: `你刚执行了 <span class="term-inline">cd Documents</span>（现在在 <span class="term-inline">C:\\Users\\YOGA\\Documents</span>）。接着执行 <span class="term-inline">cd ..</span>，然后 <span class="term-inline">pwd</span> 会打印什么？`,
+      options: [
+        { t: "C:\\Users\\YOGA", ok: true },
+        { t: "C:\\Users", ok: false, why: ".. 只上一层——Documents 的爹是 YOGA，不是 Users。" },
+        { t: "C:\\", ok: false, why: "那是上上层了。一层 .. = 一层楼。" },
+        { t: "还在 C:\\Users\\YOGA\\Documents", ok: false, why: "cd 就是用来移动的；.. 给了它方向——上一层。" }
+      ],
+      explain: `答案 A：.. 是 Documents 的父文件夹 YOGA。每多一层就是多一阶楼梯：cd .. 上一层，cd ..\\.. 上两层（在 PowerShell 里也可以写 cd ..\\..）。`,
+      hints: [
+        "Documents 的爸爸是谁？",
+        "一层 .. = 一层楼",
+        "Answer: C:\\Users\\YOGA"
+      ]
+    },
+    { type: "terminal",
+      title: "实操：cd .. —— 上楼一层",
+      goal: `依次执行：<code>cd Documents</code> → <code>cd ..</code> → <code>pwd</code>。亲身体验「上楼」和预测是否一致。`,
+      background: `先下楼（进 Documents），再上楼（cd ..），最后 pwd 验证。三个命令，一次预测——敲 pwd 之前，先说出你预期的路径。`,
+      hints: [
+        "第二个命令：cd + 空格 + 两个点",
+        ".. 在 Documents 里指向谁？",
+        "Answer: cd Documents → cd .. → pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA",
+      success: "pwd 打印 C:\\Users\\YOGA——你上楼成功。注意：cd .. 没有「撤销」任何东西，它只是把你放到了上一层。",
+      internals: "shell 把 .. 解析为当前节点的父节点，改写 cwd。.. 不是命令、不是魔法——它就是文件树上每个节点都有的一个内置指针。",
+      breakdown: [
+        { token: "cd Documents", label: "command + argument", text: "下楼：cwd 变为 …\\YOGA\\Documents。" },
+        { token: "cd ..", label: "command + argument（特殊路径）", text: ".. = 父文件夹指针，cwd 弹回 …\\YOGA。" },
+        { token: "pwd", label: "command", text: "读回 cwd 验证。" }
+      ]
+    },
+    { type: "concept",
+      title: "两种到达方式：绝对路径 vs 相对路径",
+      body: `
+        <p>去 <span class="term-inline">C:\\Users\\YOGA\\Pictures</span> 有两条路：</p>
+        <ul>
+          <li><strong>绝对路径</strong>（邮寄地址）：从盘符写全——<span class="term-inline">cd C:\\Users\\YOGA\\Pictures</span>。你在哪不重要，地址本身就够。</li>
+          <li><strong>相对路径</strong>（从当前位置指路）：依赖你在哪——站在 YOGA 时 <span class="term-inline">cd Pictures</span> 就到。</li>
+        </ul>
+        <p>Module A 学过这个 distinction；今天把它变成肌肉记忆。判断口诀：<strong>以盘符（C:\\）开头 = 绝对；否则 = 相对（从 cwd 出发）。</strong></p>`,
+      key: "绝对路径自带完整坐标；相对路径从「你现在站的地方」出发。",
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="150" viewBox="0 0 640 150">
+          <rect x="20" y="30" width="290" height="70" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <text x="165" y="58" fill="#58a6ff" font-size="13" font-family="Consolas,monospace" text-anchor="middle">cd C:\Users\YOGA\Pictures</text>
+          <text x="165" y="84" fill="#9aa7b4" font-size="11" text-anchor="middle">绝对：邮寄地址，从盘符写全</text>
+          <rect x="330" y="30" width="290" height="70" rx="10" fill="#0d1117" stroke="#3fb950" stroke-width="2"/>
+          <text x="475" y="58" fill="#3fb950" font-size="13" font-family="Consolas,monospace" text-anchor="middle">cd Pictures</text>
+          <text x="475" y="84" fill="#9aa7b4" font-size="11" text-anchor="middle">相对：从当前位置指路</text>
+        </svg>
+        </div>`
+    },
+    { type: "predict",
+      title: "Prediction：相对路径 ..\\Pictures 到哪？",
+      scenario: `你现在站在 <span class="term-inline">C:\\Users\\YOGA\\Documents</span>。执行 <span class="term-inline">cd ..\\Pictures</span> 后，pwd 会显示？`,
+      options: [
+        { t: "C:\\Users\\YOGA\\Pictures", ok: true },
+        { t: "C:\\Users\\Pictures", ok: false, why: ".. 先上一层到 YOGA，再进 Pictures——不是从 Users 直接进。" },
+        { t: "C:\\Users\\YOGA\\Documents\\Pictures", ok: false, why: "..\\Pictures 不是 Pictures：.. 已经把你带出 Documents 了。" },
+        { t: "报错：路径不存在", ok: false, why: "每一站都真实存在：YOGA 有 Pictures。" }
+      ],
+      explain: `答案 A：..\\Pictures 读作「先上一层，再进 Pictures」。相对路径可以<strong>混用</strong> .. 和普通名字，shell 从左到右逐段解析。`,
+      hints: [
+        "逐段读：.. 先到哪？再 Pictures 到哪？",
+        "每一站都在文件树上真实存在吗？",
+        "Answer: C:\\Users\\YOGA\\Pictures"
+      ]
+    },
+    { type: "terminal",
+      title: "绝对路径导航：一次到位",
+      goal: `不一步步走，直接用绝对路径：<code>cd C:\\Users\\YOGA\\Pictures</code>，然后 <code>pwd</code> 确认。`,
+      background: `绝对路径的力量：不管你现在在哪，一条命令直达。注意大小写不敏感、反斜杠的方向——打错一个斜杠方向就是另一个路径。`,
+      hints: [
+        "从盘符开始写全：C:\\Users\\YOGA\\Pictures",
+        "敲完用 pwd 验证",
+        "Answer: cd C:\\Users\\YOGA\\Pictures 然后 pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA\\Pictures",
+      success: "一条命令，直达 Pictures。这就是邮寄地址的用法。",
+      internals: "shell 看到路径以盘符开头，直接按绝对坐标解析——完全忽略你原来站在哪。cwd 被改写成目标节点。",
+      breakdown: [
+        { token: "cd", label: "command", text: "change directory。" },
+        { token: "C:\\Users\\YOGA\\Pictures", label: "argument（绝对路径）", text: "从盘符写全的坐标，自包含、不依赖起点。" }
+      ]
+    },
+    { type: "fill",
+      title: "Fill in：用绝对路径去 Downloads",
+      scenario: `你现在可能在任何位置。用<strong>绝对路径</strong>直达 Downloads 文件夹，补全：<br><span class="term-inline">cd ______</span>`,
+      before: ``,
+      after: ``,
+      answer: ["c:\\users\\yoga\\downloads", "C:\\Users\\YOGA\\Downloads"],
+      explain: `<span class="term-inline">cd C:\\Users\\YOGA\\Downloads</span>。判断绝对路径的标志：以盘符开头。相对写法 cd Downloads 在别的情况下也能到，但题目要求绝对——因为它不依赖你站在哪。`,
+      hints: [
+        "绝对路径从什么开头？",
+        "C:\\Users\\YOGA 下面那个叫 Downloads 的文件夹",
+        "Answer: cd C:\\Users\\YOGA\\Downloads"
+      ]
+    },
+    { type: "concept",
+      title: "建与删：mkdir 的安全圈",
+      body: `
+        <p>你已经会 mkdir（建）和 rm（删）。把它们的安全习惯一次说清：</p>
+        <ul>
+          <li><strong>建之前 ls 一下</strong>——别覆盖同名成员；mkdir 遇到重名会报错保护你。</li>
+          <li><strong>删文件用 rm，删文件夹用 rm -r</strong>——rm 拒删文件夹是防手滑机制，不是刁难。</li>
+          <li><strong>删之前 ls 一下</strong>——确认要删的东西真的在里面。真实终端里 rm 没有回收站。</li>
+        </ul>
+        <p>这一课在<strong>虚拟文件系统</strong>里练，删错了零代价——但把「先 ls 再 rm」的肌肉记忆留在手上。</p>`,
+      key: "<strong>先 ls 再 rm；文件夹加 -r。</strong>rm 没有撤销键。"
+    },
+    { type: "terminal",
+      title: "mkdir practice：建一个练习场",
+      goal: `在你的家目录（C:\\Users\\YOGA）里建一个文件夹 <code>practice</code>，然后用 <code>ls</code> 确认它出现了。`,
+      background: `注意：你现在可能还在 Pictures 里——任务要求建在家目录。可以先 cd 回家，也可以用绝对路径直接 mkdir C:\\Users\\YOGA\\practice。两种解法都合法。`,
+      hints: [
+        "先确认自己在哪：pwd",
+        "不在 YOGA 就先 cd C:\\Users\\YOGA（或 cd .. 层层回）",
+        "Answer: cd C:\\Users\\YOGA 然后 mkdir practice 然后 ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mkdir" && getNode(s.fs, ["C:", "Users", "YOGA", "practice"]) !== undefined,
+      success: "practice 出现在列表里——你有了自己的练习场。",
+      internals: "mkdir 在目标文件夹的「成员登记表」上加一行：practice → 新空对象（空文件夹）。建文件夹 = 往父节点的登记表里写一条。",
+      breakdown: [
+        { token: "mkdir", label: "command", text: "make directory，建文件夹。" },
+        { token: "practice", label: "argument", text: "新文件夹的名字。" }
+      ]
+    },
+    { type: "terminal",
+      title: "文件三件套：进、建、看、回",
+      goal: `完整走一圈：<code>cd practice</code> → <code>touch todo.txt</code> → <code>ls</code> → <code>cd ..</code>。每个命令亲手敲。`,
+      background: `这是一个四拍的小舞蹈：进新家 → 放个文件 → 看看 → 回家。预测每一步终端会回什么，再执行。完成后 practice 里应该躺着 todo.txt。`,
+      hints: [
+        "第一拍：cd practice",
+        "第二拍：touch + 文件名",
+        "Answer: cd practice → touch todo.txt → ls → cd .."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "cd" && s.cwd.join("\\") === "C:\\Users\\YOGA" && getNode(s.fs, ["C:", "Users", "YOGA", "practice", "todo.txt"]) === null,
+      success: "pwd 级别的验证通过：你回到了 YOGA，而 practice\\todo.txt 真实存在。进、建、看、回——四拍齐了。",
+      internals: "touch 在 practice 的登记表里加了 todo.txt（空文件）。cd .. 弹回父节点——注意文件留在原地：移动的是你，不是它们。",
+      breakdown: [
+        { token: "cd practice", label: "command + argument", text: "进入子文件夹。" },
+        { token: "touch todo.txt", label: "command + argument", text: "在 cwd（practice）里建空文件。" },
+        { token: "ls", label: "command", text: "查看 cwd 成员。" },
+        { token: "cd ..", label: "command + argument", text: "回到父文件夹。" }
+      ]
+    },
+    { type: "concept",
+      title: "引号：空格是分隔符，引号粘成一个词",
+      body: `
+        <p>shell 分词只看一件事：<strong>空格</strong>。空格 = 词与词的分界。所以 <span class="term-inline">mkdir my folder</span> 会被拆成 mkdir + my + folder 三个词——mkdir 只认第一个，建出一个叫 my 的文件夹，folder 被无视。</p>
+        <p>引号的作用：<strong>把带空格的内容粘成一个词</strong>。</p>
+        <ul>
+          <li><span class="term-inline">mkdir my folder</span> → 一个文件夹（my），一个孤儿词（folder）</li>
+          <li><span class="term-inline">mkdir "my folder"</span> → 一个文件夹，名字就叫 <strong>my folder</strong></li>
+        </ul>
+        <p>这不是 mkdir 的规矩——是 <strong>shell 的规矩</strong>：引号在命令到达程序之前就被 shell 处理掉了。程序收到的是一个完整词。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="170" viewBox="0 0 640 170">
+          <text x="30" y="45" fill="#e6edf3" font-size="14" font-family="Consolas,monospace">mkdir my folder</text>
+          <g font-size="12" font-family="Consolas,monospace" text-anchor="middle">
+            <rect x="30" y="60" width="90" height="34" rx="7" fill="#161b22" stroke="#58a6ff"/><text x="75" y="82" fill="#58a6ff">mkdir</text>
+            <rect x="135" y="60" width="70" height="34" rx="7" fill="#161b22" stroke="#3fb950"/><text x="170" y="82" fill="#3fb950">my</text>
+            <rect x="220" y="60" width="80" height="34" rx="7" fill="#161b22" stroke="#f85149"/><text x="260" y="82" fill="#f85149">folder✗</text>
+          </g>
+          <text x="30" y="140" fill="#e6edf3" font-size="14" font-family="Consolas,monospace">mkdir "my folder"</text>
+          <g font-size="12" font-family="Consolas,monospace" text-anchor="middle">
+            <rect x="30" y="115" width="90" height="34" rx="7" fill="#161b22" stroke="#58a6ff"/><text x="75" y="137" fill="#58a6ff">mkdir</text>
+            <rect x="350" y="115" width="130" height="34" rx="7" fill="#161b22" stroke="#3fb950"/><text x="415" y="137" fill="#3fb950">my folder ✓</text>
+          </g>
+          <text x="490" y="137" fill="#9aa7b4" font-size="12">← 引号粘成一词</text>
+        </svg>
+        <div class="cap">空格切词，引号粘词。引号是 shell 的预处理，不是 mkdir 的功能。</div>
+        </div>`,
+      key: "<strong>参数里带空格 → 加引号。</strong>先经 shell 分词，再到程序。"
+    },
+    { type: "predict",
+      title: "Prediction：mkdir my folder 会发生什么？",
+      scenario: `你输入 <span class="term-inline">mkdir my folder</span>（没有引号）。最可能发生什么？`,
+      options: [
+        { t: "只建出一个叫 my 的文件夹——shell 按空格切成三个词，mkdir 用第一个词当名字，folder 被忽略", ok: true },
+        { t: "建出 my 和 folder 两个文件夹", ok: false, why: "mkdir 一次只建一个——多余的词不会被循环使用。" },
+        { t: "建出一个叫 my folder 的文件夹", ok: false, why: "不带引号时空格是词边界——名字到空格就结束了。" },
+        { t: "报错：名字不合法", ok: false, why: "my 是合法名字，命令会成功——这才是它阴险的地方：你以为失败了，其实建错了。" }
+      ],
+      explain: `答案 A——而且这是最坏的「静默错误」：命令成功了，但结果和你想的不一样。真实终端里这种错误不会提醒你。<strong>经验法则：名字里有空格，就加引号。</strong>`,
+      hints: [
+        "shell 先做什么？（分词）",
+        "mkdir 拿三个词里的第几个？",
+        "Answer: 只建出 my，folder 被忽略"
+      ]
+    },
+    { type: "fill",
+      title: "Fill in：建一个带空格的文件夹",
+      scenario: `你要建一个名字是 <span class="term-inline">my folder</span> 的文件夹（空格要保留）。补全命令：<br><span class="term-inline">mkdir ______</span>`,
+      before: ``,
+      after: ``,
+      answer: ['"my folder"', "'my folder'"],
+      explain: `<span class="term-inline">mkdir "my folder"</span>。引号让 my folder 成为一个词。单引号双引号在 PowerShell 里这里等价。`,
+      hints: [
+        "答案里必须包含什么符号？",
+        "把整个名字（含空格）包起来",
+        "Answer: mkdir \"my folder\""
+      ]
+    },
+    { type: "terminal",
+      title: "实操：mkdir \"my folder\"",
+      goal: `亲手建出带空格的文件夹：先 <code>pwd</code> 确认你在 C:\\Users\\YOGA，然后 <code>mkdir "my folder"</code>，再 <code>ls</code> 看它出现。`,
+      background: `敲引号时留意终端记录：命令原文带引号，但模拟器会把 my folder 当成<strong>一个</strong>名字处理——和 8.3 的 git 练习是同一个原理。`,
+      hints: [
+        "先确认位置：pwd",
+        "mkdir + 空格 + 英文双引号包住 my folder",
+        "Answer: mkdir \"my folder\" 然后 ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mkdir" && getNode(s.fs, ["C:", "Users", "YOGA", "my folder"]) !== undefined,
+      success: "ls 里出现 my folder——一个文件夹，名字自带空格。引号生效。",
+      internals: "shell 的分词器看到引号，把引号内的空格「屏蔽」，my folder 作为一个 token 交给 mkdir。mkdir 拿到的参数就叫 my folder。",
+      breakdown: [
+        { token: "mkdir", label: "command", text: "建文件夹。" },
+        { token: "\"my folder\"", label: "argument（一个被引号粘住的词）", text: "引号在 shell 层就被剥掉——程序收到的是 my folder。" }
+      ]
+    },
+    { type: "concept",
+      title: "通配符 *：模式匹配，一把圈选",
+      body: `
+        <p><span class="term-inline">*</span>（星号）= 「任意长度的任意字符」。它让你用<strong>一个模式</strong>指代一批名字：</p>
+        <ul>
+          <li><span class="term-inline">ls *.txt</span> —— 列出所有 .txt 结尾的成员</li>
+          <li><span class="term-inline">rm *.tmp</span> —— 删除所有 .tmp 结尾的文件</li>
+        </ul>
+        <p>关键认知：<strong>* 是 shell 先替你展开成一串名字，再交给命令</strong>——不是 ls/rm 自己懂模式。对程序来说，来的就是普通的参数列表。</p>
+        <p>安全铁律：<strong>用 rm + 通配符之前，先 ls 一遍同样的模式</strong>——亲眼确认会命中谁。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="640" height="180" viewBox="0 0 640 180">
+          <g font-family="Consolas,monospace" font-size="13">
+            <text x="30" y="40" fill="#e6edf3">ls *.txt</text>
+            <text x="30" y="70" fill="#9aa7b4">↓ shell 展开</text>
+            <text x="30" y="100" fill="#3fb950">ls a1.txt a2.txt</text>
+            <text x="30" y="130" fill="#9aa7b4">↓ 程序收到的就是普通参数</text>
+          </g>
+          <g font-size="12" text-anchor="middle">
+            <rect x="380" y="20" width="230" height="30" rx="7" fill="#161b22" stroke="#3fb950"/><text x="495" y="40" fill="#e6edf3" font-family="Consolas,monospace">a1.txt ✓</text>
+            <rect x="380" y="60" width="230" height="30" rx="7" fill="#161b22" stroke="#3fb950"/><text x="495" y="80" fill="#e6edf3" font-family="Consolas,monospace">a2.txt ✓</text>
+            <rect x="380" y="100" width="230" height="30" rx="7" fill="#161b22" stroke="#f85149"/><text x="495" y="120" fill="#e6edf3" font-family="Consolas,monospace">b.md ✗ 不匹配</text>
+          </g>
+        </svg>
+        <div class="cap">* 是 shell 的圈选器：先展开、再执行。? 匹配恰好一个字符。</div>
+        </div>`,
+      key: "<strong>* = 任意任意；? = 任意一个。</strong>展开发生在 shell 层。先 ls 模式，再 rm 模式。"
+    },
+    { type: "predict",
+      title: "Safety：rm *.txt 之前应该先做什么？",
+      scenario: `你要清理家目录里所有 .txt 文件，打算执行 <span class="term-inline">rm *.txt</span>。敲回车<strong>之前</strong>，最应该先做的一步是？`,
+      options: [
+        { t: "先运行 ls *.txt——亲眼确认这个模式会命中哪些文件，没有误伤再删", ok: true },
+        { t: "先重启终端", ok: false, why: "重启不改变任何东西。" },
+        { t: "直接删——rm 会问每个文件", ok: false, why: "rm 默认不问。删了就是删了（真实终端里没有回收站）。" },
+        { t: "先 cd 到 C:\\ 再删", ok: false, why: "那只会扩大误伤范围——你要删的是家目录里的。" }
+      ],
+      explain: `答案 A：ls 同一个模式 = 免费试射。<strong>通配符 + rm 是命令行最经典的「手滑事故」组合</strong>——rm -r *.bak 删掉的可能是你没想到的东西。先 ls 再 rm，零成本。`,
+      hints: [
+        "有没有零风险的办法预览命中结果？",
+        "同一个模式，换 ls 跑一遍",
+        "Answer: 先 ls *.txt 确认命中"
+      ]
+    },
+    { type: "terminal",
+      title: "通配符实操：建一批、圈选看",
+      goal: `在 C:\\Users\\YOGA 下依次执行：<code>touch a1.txt</code> → <code>touch a2.txt</code> → <code>touch b.md</code> → <code>ls *.txt</code>。最后一步只应该列出两个 txt。`,
+      background: `三个文件、一次圈选。预测：ls *.txt 的输出里有几个名字？b.md 会出现吗？为什么？`,
+      hints: [
+        "touch 三次，每次一个文件",
+        "ls 后面跟一个带星号的模式",
+        "Answer: touch a1.txt → touch a2.txt → touch b.md → ls *.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && r.args.indexOf("*.txt") !== -1 && getNode(s.fs, ["C:", "Users", "YOGA", "a1.txt"]) === null && getNode(s.fs, ["C:", "Users", "YOGA", "b.md"]) === null,
+      success: "ls *.txt 只列出 a1.txt 和 a2.txt——b.md 被模式拒之门外。圈选成功。",
+      internals: "shell 把 *.txt 展开成 a1.txt a2.txt（b.md 不匹配）再交给 ls。ls 收到的参数列表里根本没有星号——模式在 shell 层就被消化了。",
+      breakdown: [
+        { token: "touch a1.txt / a2.txt / b.md", label: "command + argument ×3", text: "建三个文件。" },
+        { token: "ls *.txt", label: "command + 模式（shell 展开）", text: "* 匹配任意字符；只有 .txt 结尾的入选。" }
+      ]
+    },
+    { type: "terminal",
+      title: "安全删除流程：先瞄、再删、后验",
+      goal: `完整演示安全流程：<code>ls *.txt</code>（瞄一眼）→ <code>rm *.txt</code>（删）→ <code>ls</code>（验证）。确认 a1.txt 和 a2.txt 没了、b.md 还在。`,
+      background: `这就是真实工作里的标准动作：<strong>预览 → 执行 → 验证</strong>。养成它，你以后永远不会被通配符 rm 坑到。`,
+      hints: [
+        "第一步和上一题最后一步一样",
+        "第二步：rm + 同一个模式",
+        "Answer: ls *.txt → rm *.txt → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "rm" && r.args.indexOf("*.txt") !== -1 && getNode(s.fs, ["C:", "Users", "YOGA", "a1.txt"]) === undefined && getNode(s.fs, ["C:", "Users", "YOGA", "a2.txt"]) === undefined && getNode(s.fs, ["C:", "Users", "YOGA", "b.md"]) === null,
+      success: "两个 txt 消失、b.md 幸存——模式删对了。预览→执行→验证，三遍 ls 的价值都在这里。",
+      internals: "rm 把展开后的 a1.txt a2.txt 逐个从登记表删除（虚拟系统，零代价）。b.md 从头到尾没进过参数列表——这就是先瞄一眼的意义。",
+      breakdown: [
+        { token: "ls *.txt", label: "command + 模式", text: "预览：模式会命中谁。" },
+        { token: "rm *.txt", label: "command + 模式", text: "执行：只删展开结果里的文件。" },
+        { token: "ls", label: "command", text: "验证：误伤检查。" }
+      ]
+    },
+    { type: "concept",
+      title: "Option 组合拳：-r 不是唯一的开关",
+      body: `
+        <p>option 通常可以<strong>连用</strong>、<strong>成组</strong>：</p>
+        <ul>
+          <li><span class="term-inline">ls -la</span> = ls + -l（详细）+ -a（含隐藏文件），两个开关并排</li>
+          <li><span class="term-inline">rm -r -f old</span> 常写成 <span class="term-inline">rm -rf old</span> —— 开关压缩在一起</li>
+        </ul>
+        <p>读法不变：见到 - 开头就按 option 处理，逐个翻译成「打开什么模式」。你不需要记每个开关是干嘛的——<strong>会读结构 + 会查文档</strong>就够用了（--help 和文档里都会写）。</p>`,
+      key: "option 可以并排、可以压缩（-rf = -r -f）。读结构，不背开关。"
+    },
+    { type: "fill",
+      title: "Fill in：安全地删掉练习场",
+      scenario: `练习结束了，要删掉整个 practice 文件夹（里面还有 todo.txt）。普通 rm 会拒绝——补全这条命令：<br><span class="term-inline">______ practice</span>`,
+      before: ``,
+      after: ` practice`,
+      answer: ["rm -r", "rm -rf"],
+      explain: `<span class="term-inline">rm -r practice</span>：rm 是动作、practice 是对象、-r 是「递归」开关——没有它，rm 不敢碰文件夹。这句命令填的是「动作 + 开关」，对象 practice 已经给你了。`,
+      hints: [
+        "删文件夹需要哪个开关？",
+        "rm + 空格 + 开关，对象已给出",
+        "Answer: rm -r"
+      ]
+    },
+    { type: "concept",
+      title: "Pipe：把输出喂给下一个命令",
+      body: `
+        <p>最后一个概念：<strong>管道（pipe），符号是竖线 ｜</strong>（通常在 Enter 键上方）。</p>
+        <p>它的意思：<strong>左边命令的输出，不直接上屏，而是作为右边命令的输入。</strong>像传送带：</p>
+        <p><span class="term-inline">ls ｜ Sort-Object</span> —— ls 列出的成员，交给 Sort-Object 排序后再显示。</p>
+        <p>为什么需要它？因为<strong>命令的输出可以成为另一个命令的原料</strong>——这是命令行比 GUI 强大的核心原因之一（GUI 的窗口之间没法这样接线）。</p>
+        <p>⚠️ 本模拟器暂不支持 pipe（引擎会提示你）——现在先建立概念，真实 PowerShell 里随时可试。</p>`,
+      visual: `
+        <div class="diagram">
+        <svg width="660" height="140" viewBox="0 0 660 140">
+          <g font-family="Consolas,monospace" font-size="14" text-anchor="middle">
+            <rect x="20" y="40" width="110" height="46" rx="9" fill="#161b22" stroke="#58a6ff"/><text x="75" y="69" fill="#58a6ff">ls</text>
+            <text x="175" y="70" fill="#d29922" font-size="22">｜</text>
+            <rect x="220" y="40" width="150" height="46" rx="9" fill="#161b22" stroke="#3fb950"/><text x="295" y="69" fill="#3fb950">Sort-Object</text>
+            <line x1="130" y1="63" x2="165" y2="63" stroke="#9aa7b4" stroke-width="2" marker-end="url(#a4)"/>
+            <line x1="185" y1="63" x2="220" y2="63" stroke="#9aa7b4" stroke-width="2" marker-end="url(#a4)"/>
+            <line x1="370" y1="63" x2="440" y2="63" stroke="#9aa7b4" stroke-width="2" marker-end="url(#a4)"/>
+            <text x="530" y="70" fill="#e6edf3">屏幕上：排序后的列表</text>
+          </g>
+          <text x="330" y="120" fill="#9aa7b4" font-size="12" text-anchor="middle">左边的输出 = 右边的输入。命令像乐高一样接线。</text>
+        </svg>
+        <div class="cap">pipe 让小的命令组合成大的工具。</div>
+        </div>`,
+      key: "<strong>｜ = 接线。</strong>输出变输入。先记概念，Module 06 再实操。"
+    },
+    { type: "ordering",
+      title: "Ordering：一条管道线的执行顺序",
+      scenario: `命令 <span class="term-inline">ls ｜ Sort-Object</span> 背后发生了什么？按发生顺序点击：`,
+      items: [
+        { id: "lsrun", t: "ls 在自己的进程里列出成员" },
+        { id: "pipe", t: "输出被送进管道，而不是直接上屏" },
+        { id: "sort", t: "Sort-Object 读到这份名单并排序" },
+        { id: "show", t: "屏幕上出现排序后的结果" }
+      ],
+      order: ["lsrun", "pipe", "sort", "show"],
+      explain: `顺序：ls 产出 → 管道转交 → Sort-Object 加工 → 上屏。每个命令只管自己的活，管道负责搬运——这就是「组合小工具」的思想。`,
+      hints: [
+        "谁最先动？（最左边）",
+        "最后才是屏幕",
+        "Answer: ls 执行 → 进管道 → 排序 → 上屏"
+      ]
+    },
+    { type: "concept",
+      title: "写命令的检查清单（回车前 5 秒）",
+      body: `
+        <p>把这一课压缩成回车前的 5 秒检查：</p>
+        <ol>
+          <li><strong>动作对吗？</strong>（command 是不是我想用的那个程序）</li>
+          <li><strong>对象对吗？</strong>（argument 拼写、大小写、. 还是 ..）</li>
+          <li><strong>带空格了吗？</strong>（带了 → 补引号）</li>
+          <li><strong>要批量吗？</strong>（要 → 先 ls 模式再操作）</li>
+          <li><strong>删东西吗？</strong>（删 → 确认没有 -r 误伤圈；文件夹加 -r）</li>
+        </ol>
+        <p>5 秒能挡住 90% 的手滑。剩下的 10%，交给「先 ls 再 rm」和虚拟练习场。</p>`,
+      key: "动作、对象、引号、批量、删除——回车前各扫一眼。"
+    },
+    { type: "predict",
+      title: "Scenario：哪个序列能完成任务？",
+      scenario: `目标：在 <span class="term-inline">practice</span> 文件夹里建一个 <span class="term-inline">notes.txt</span>。你现在在 <span class="term-inline">C:\\Users\\YOGA</span>。哪个命令序列能<strong>干净利落地</strong>达成？`,
+      options: [
+        { t: "cd practice → touch notes.txt", ok: true },
+        { t: "touch practice notes.txt", ok: false, why: "touch 把 practice 和 notes.txt 当成两个并列的文件名——建出来的是 YOGA 下的两个文件，不是 practice 里的一个。" },
+        { t: "mkdir practice → touch notes.txt", ok: false, why: "practice 已存在（mkdir 会报重名错），而且 touch 还是在 YOGA 下建——notes.txt 不在 practice 里。" },
+        { t: "touch notes.txt → cd practice", ok: false, why: "顺序反了：notes.txt 建在 YOGA，然后你人进了 practice——文件不在目标位置。" }
+      ],
+      explain: `答案 A：先移动（cd），再在 cwd 里建文件。顺序就是「先站到那，再动手」。touch 的 cwd 决定了文件落在哪里——这和文件资源管理器里「先双击进文件夹，再右键新建」是同一个动作。`,
+      hints: [
+        "文件建在哪，取决于什么？（cwd）",
+        "所以第一步该做什么？",
+        "Answer: cd practice 然后 touch notes.txt"
+      ]
+    },
+    { type: "terminal",
+      title: "GUI 召唤复习：explorer .",
+      goal: `执行 <code>explorer .</code>——在 File Explorer 里打开当前文件夹（虚拟模拟）。`,
+      background: `写命令的间隙复习一个观念：terminal 能召唤 GUI。参数 . 指的是「当前这个文件夹」。预测：如果现在 cwd 是 YOGA，弹出的窗口会显示哪些成员？`,
+      hints: [
+        "explorer + 空格 + 一个点",
+        ". 代表当前文件夹",
+        "Answer: explorer ."
+      ],
+      validate: (r, s) => !r.err && (r.cmd === "explorer" || r.cmd === "start"),
+      success: "【模拟 GUI】File Explorer 弹出。体会这条链：你在 CLI 里打字 → 一个 GUI 窗口出现。8.3 的句法 + 8.0 的召唤，合体。",
+      internals: "shell 在 PATH 找到 explorer.exe（住在 C:\\Windows），OS 启动它并把 . 解析后的路径作为参数传进去。程序是 GUI 还是 CLI，shell 并不关心——它只负责找到并启动。",
+      breakdown: [
+        { token: "explorer", label: "program 程序（GUI 型）", text: "PATH 里的 explorer.exe。" },
+        { token: ".", label: "argument", text: "当前文件夹——告诉它打开哪里。" }
+      ]
+    },
+    { type: "terminal",
+      title: "毕业小考：一条龙的建家任务",
+      goal: `完整任务链：<code>mkdir lab2</code> → <code>cd lab2</code> → <code>touch readme.txt</code> → <code>code .</code>。不查 Hint，自己排错。`,
+      background: `终极检验：四拍动作 + 一次 GUI 召唤。如果中途报错，读错误信息——它说的每个字都是线索。完成后你将拥有一个装着 readme.txt 的 lab2，并在 VS Code（模拟）里打开了它。`,
+      hints: [
+        "第一拍：在家目录建 lab2",
+        "第三拍是在新的 cwd 里建文件",
+        "Answer: mkdir lab2 → cd lab2 → touch readme.txt → code ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "code" && s.cwd.join("\\") === "C:\\Users\\YOGA\\lab2" && getNode(s.fs, ["C:", "Users", "YOGA", "lab2", "readme.txt"]) === null,
+      success: "code . 成功时，cwd 是 lab2、readme.txt 在里面——四拍全对。你已经能独立写出一条完整的命令链了。",
+      internals: "每个命令的结构你都拆解过：mkdir（command+argument）、cd（command+argument）、touch（command+argument）、code（program+argument）。没有新魔法——只是把你已有的积木搭成了一座房子。",
+      breakdown: [
+        { token: "mkdir lab2", label: "command + argument", text: "建家。" },
+        { token: "cd lab2", label: "command + argument", text: "进屋。" },
+        { token: "touch readme.txt", label: "command + argument", text: "在屋内（cwd）放文件。" },
+        { token: "code .", label: "program + argument", text: "召唤 VS Code 打开当前文件夹。" }
+      ]
+    },
+    { type: "concept",
+      title: "小结：你已经能写命令了——下一站是「别的 shell」",
+      body: `
+        <p>回顾这一课你亲手做过的事：导航、上楼、绝对路径直达、带引号的名字、通配符圈选、安全删除、四拍建家、GUI 召唤。全部在 PowerShell 的世界里完成。</p>
+        <p>但留一个钩子：你现在写的每一行，都是 <strong>PowerShell 的方言</strong>。同一台电脑里还住着说<strong>别的方言</strong>的 shell——下一关 <strong>8.5 Same Computer, Different Shells</strong> 会让你亲眼看见：同一棵树，两种说法。</p>`,
+      key: "<strong>会写 PowerShell ≠ 会命令行。</strong>命令行是更大的概念——8.5 见。"
+    }
+  ]
+}
+
 ];
 
 /* ================================================================
@@ -4152,14 +5308,119 @@ const REVIEWS = {
         { t: "换管理员终端", ok: false, why: "权限问题报 denied。" },
         { t: "重装系统", ok: false, why: "离谱。" } ] }
     ]
+  },
+  "8.3": {
+    concepts: [
+      "command 是唯一必需成分——一个词（pwd）也是完整句子；argument 和 option 都是可选挂件",
+      "读命令三问：command 回答「做什么」、option 回答「怎么做」、argument 回答「对谁 / 用什么值」",
+      "判别option 双重判据：形式上以 - 或 -- 开头，语义上改变行为而非操作对象",
+      "subcommand = 工具箱型 program 的动作菜单（git status/add/commit/log/clone）；单动作程序（python、ls）天然没有",
+      "option 也可以吃 argument：-m \"hello\" 中 \"hello\" 是挂在 -m 下面的值",
+      "argument 不一定是文件名——文件夹（Documents）、文字（\"hello\"）、符号（.）都可以，判别看「回答什么问题」不看长相",
+      "「command + subcommand + option + argument」是常见 pattern，不是法律——每个程序自己定自己的语法",
+      "读任何命令的协议：先读 syntax → 再理解 meaning → 最后才执行"
+    ],
+    commands: [
+      { cmd: "git commit -m \"msg\"", en: "—", zh: "四层句法的标准范例：program/subcommand/option/argument" },
+      { cmd: "git status / add / log / clone", en: "—", zh: "git 工具箱的动作菜单（Module D 逐个教）" },
+      { cmd: "rm -r old", en: "remove recursively", zh: "command + option + argument 三要素同句" },
+      { cmd: "docker run -d --name web nginx", en: "—", zh: "陌生命令阅读训练样本" }
+    ],
+    terms: [
+      { en: "syntax / grammar", zh: "句法 / 语法", ex: "每个程序自己定义自己的" },
+      { en: "subcommand", zh: "子命令", ex: "git commit 的 commit" },
+      { en: "option / flag", zh: "选项 / 开关", ex: "-m、--message、-r" },
+      { en: "argument", zh: "参数（值/对象）", ex: "Documents、\"hello\"、. 都可以" },
+      { en: "pattern（不是 law）", zh: "模式（不是法律）", ex: "四件套是常见结构，非必须凑齐" },
+      { en: "toolbox program", zh: "工具箱型程序", ex: "git、docker、npm" },
+      { en: "single-action program", zh: "单动作程序", ex: "pwd、python、code" }
+    ],
+    mistakes: [
+      "把「没有 subcommand」当错误——单动作程序天然只有两层",
+      "看见第二个词就说是 argument——工具箱 program 的第二个词通常是 subcommand",
+      "靠背「带横线 = option」应付一切——还要看语义（改变行为 vs 操作对象）",
+      "以为 argument 只能是文件名——文件夹名、一段文字、. 符号都可以",
+      "把四件套当法律套所有命令——python --version 没有 subcommand 也完全合法",
+      "跳过结构直接执行陌生命令——先 syntax、再 meaning、最后回车"
+    ],
+    quiz: [
+      { q: "git commit -m \"hello\" 中，\"hello\" 最直接的角色是？", options: [
+        { t: "-m 这个 option 的 argument（开关的值）", ok: true, why: "" },
+        { t: "git 的 argument", ok: false, why: "git 的宾语是 commit；hello 紧跟 -m，归开关管。" },
+        { t: "subcommand", ok: false, why: "subcommand 是 commit；hello 没有动作的含义。" },
+        { t: "option", ok: false, why: "option 以 - 开头；hello 是交给 -m 的数据。" } ] },
+      { q: "在 ls -l 中，为什么 -l 是 option 而不是 argument？", options: [
+        { t: "形式：以 - 开头；语义：改变 ls 的行为（详细模式）而非操作对象", ok: true, why: "" },
+        { t: "因为它短", ok: false, why: "长短无关——--message 很长也是 option。" },
+        { t: "因为 argument 只能是文件名", ok: false, why: "argument 可以是路径、文字、符号——这是本关拆过的误区。" },
+        { t: "因为它在命令末尾", ok: false, why: "位置不是判据；语义（改变行为）才是。" } ] },
+      { q: "为什么 Git 把动作设计成 git commit 这种 program + subcommand，而不是一堆独立命令？", options: [
+        { t: "这些动作共享同一个程序和它的上下文（配置、仓库、文档）——git 是入口，subcommand 是菜单", ok: true, why: "" },
+        { t: "因为独立命令名太长了", ok: false, why: "长度不是本质理由。" },
+        { t: "因为 shell 不允许注册新命令", ok: false, why: "shell 随时能装新程序。" },
+        { t: "纯属巧合", ok: false, why: "docker run、npm install 都这样——是通用组织方式。" } ] }
+    ]
+  },
+  "8.4": {
+    concepts: [
+      "导航四件套回答四个问题：pwd=我在哪、ls=有什么、cd=去那、mkdir=建家",
+      ". = 当前文件夹，.. = 父文件夹；cd .. 是移动不是撤销",
+      "绝对路径以盘符开头、自包含；相对路径从 cwd 出发；两者可混用（cd ..\\Pictures）",
+      "引号把带空格的内容粘成一个词：mkdir \"my folder\"；引号是 shell 的预处理，不是程序的功能",
+      "通配符 * 匹配任意字符、? 匹配一个字符；shell 先展开成名字列表再交给命令",
+      "安全铁律：rm + 通配符之前，先 ls 同一个模式；文件夹删除要 rm -r",
+      "option 可连用（-la）可压缩（-rf = -r -f）",
+      "pipe（｜）把左边命令的输出作为右边的输入——小命令组合成大工具（模拟器暂不支持，概念先行）",
+      "文件建在哪取决于 cwd——先 cd 到目标位置再动手"
+    ],
+    commands: [
+      { cmd: "cd .. / cd ..\\..", en: "—", zh: "上一层 / 上两层" },
+      { cmd: "mkdir \"my folder\"", en: "make directory", zh: "引号粘词，名字带空格" },
+      { cmd: "ls *.txt / rm *.txt", en: "—", zh: "通配符圈选：先 ls 预览再 rm 执行" },
+      { cmd: "rm -r folder", en: "remove recursively", zh: "删文件夹必须加 -r" },
+      { cmd: "code . / explorer .", en: "—", zh: "召唤 GUI：.  = 当前文件夹" },
+      { cmd: "ls ｜ Sort-Object", en: "—", zh: "pipe 概念范例（Module 06 实操）" }
+    ],
+    terms: [
+      { en: "parent folder pointer", zh: "父文件夹指针", ex: ".." },
+      { en: "absolute / relative path", zh: "绝对 / 相对路径", ex: "C:\\Users\\YOGA vs Pictures" },
+      { en: "glob / wildcard", zh: "通配符", ex: "*.txt、file-?" },
+      { en: "quote / quoting", zh: "引号 / 加引号", ex: "\"my folder\" 是一个词" },
+      { en: "pipe ｜", zh: "管道", ex: "输出变输入" },
+      { en: "silent error", zh: "静默错误", ex: "mkdir my folder 成功了但结果不对" }
+    ],
+    mistakes: [
+      "mkdir my folder 无引号——建出 my 而不是 my folder，且不报错",
+      "相对路径当绝对用：站在 Documents 里 cd Pictures（它是 YOGA 的孩子，不是 Documents 的）",
+      "删文件夹忘加 -r，被 rm 拒删后不知所措",
+      "rm + 通配符不预览——误删的classic姿势；先 ls 同一个模式",
+      "在错的 cwd 里 touch——文件建在原地而不是目标文件夹；先 cd 再建",
+      "以为 * 是程序的功能——其实是 shell 先展开，程序收到普通参数"
+    ],
+    quiz: [
+      { q: "站在 C:\\Users\\YOGA\\Documents，执行 cd ..\\Pictures 后 pwd 显示？", options: [
+        { t: "C:\\Users\\YOGA\\Pictures", ok: true, why: "" },
+        { t: "C:\\Users\\Pictures", ok: false, why: ".. 只上一层到 YOGA，再进 Pictures。" },
+        { t: "C:\\Users\\YOGA\\Documents\\Pictures", ok: false, why: ".. 已经带你出了 Documents。" },
+        { t: "报错", ok: false, why: "每一站都真实存在。" } ] },
+      { q: "要建一个叫 my folder 的文件夹，正确命令是？", options: [
+        { t: "mkdir \"my folder\"", ok: true, why: "" },
+        { t: "mkdir my folder", ok: false, why: "无引号：空格切词，只建出 my。" },
+        { t: "mkdir my_folder", ok: false, why: "名字变了——下划线不是空格。" },
+        { t: "mkdir 'my folder'", ok: false, why: "这其实也对……但本课程以双引号为标准写法。" } ] },
+      { q: "执行 rm *.txt 之前，最安全的第一步是？", options: [
+        { t: "先运行 ls *.txt，确认模式会命中哪些文件", ok: true, why: "" },
+        { t: "重启终端", ok: false, why: "不改变任何东西。" },
+        { t: "直接删——rm 会逐个询问", ok: false, why: "rm 默认不问，删了就是删了。" },
+        { t: "先 cd 到 C:\\", ok: false, why: "反而扩大误伤范围。" } ] }
+    ]
   }
-
 };
 
 const ROADMAP = [
   { mod: "A", name: "File System & Paths · 文件系统与路径", levels: [0,1,2], desc: "Level 0 操作对象 → Level 1 文件与文件夹 → Level 2 路径（绝对/相对/..）" },
   { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
-  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）" },
+  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2","8.3","8.4"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）→ 8.3 Command Syntax（How is a sentence built?）→ 8.4 Command Line in Practice（Can I write one myself?）" },
   { mod: "D", name: "Git & GitHub", levels: [9,10,11,12,13,14,15], desc: "Level 9 Git mental model → 10 GitHub → 11 Repository → 12 clone/status/add/commit → 13 remote/push/pull（含 fetch vs pull 可视化）→ 14 分支与合并 → 15 阅读真实仓库 LaTeX-Workshop-2026" },
   { mod: "E", name: "Development Environment · 开发环境", levels: [16,17], desc: "Level 16 VS Code 与开发环境 → Level 17 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
   { mod: "F", name: "Network Basics · 网络基础", levels: [18,19], desc: "Level 18 IP / DNS / 网络连接 → Level 19 ping / ipconfig / nslookup / 代理" },

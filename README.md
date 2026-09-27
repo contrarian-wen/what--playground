@@ -25,7 +25,7 @@ Command Line 与 Git/GitHub 是核心主线；知识之间互相连接，最终�
 |---|---|---|
 | A · File System & Paths 文件系统与路径 | 0–2 | ✅ Open |
 | B · Terminal & Shell 终端与 Shell | 3–5 | ✅ Open |
-| C · Programs, PATH & Terminal Ecosystem | 6, 7, 8.0, 8.1, 8.2 | ✅ Open（8.1 / 8.2 为最新内容） |
+| C · Programs, PATH & Terminal Ecosystem | 6, 7, 8.0, 8.1, 8.2, 8.3, 8.4 | ✅ Open（8.3 / 8.4 为最新内容） |
 | D · Git & GitHub | 9–15 | 🔜 Coming soon |
 | E · Development Environment（含 LaTeX 工具链） | 16–17 | 🔜 Coming soon |
 | F · Network Basics 网络基础 | 18–19 | 🔜 Coming soon |

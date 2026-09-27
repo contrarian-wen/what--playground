@@ -26,7 +26,7 @@ Computer Fundamentals Playground
 - 结构：**Module → Level → Step**。
 - 交互闭环：Understand → Predict → Try → Make Mistake → Diagnose → Review → Ask。
 - **先猜后答**：Prediction 先于 Explanation；错误选项必须带 why，错误是教学材料不是失败。
-- 虚拟终端引擎支撑「Try」：pwd / ls / cd / mkdir / touch / cat / cp / mv / rm / where / path / path-add / env / echo / notepad / code / explorer / git --version 等，操作虚拟文件系统，绝不碰真实电脑。
+- 虚拟终端引擎支撑「Try」：pwd / ls / cd / mkdir / touch / cat / cp / mv / rm / where / path / path-add / env / echo / notepad / code / explorer / git（init / commit -m / status）等，支持引号参数与 `*` `?` 通配符，操作虚拟文件系统，绝不碰真实电脑。
 
 ## 3. Module Structure
 
@@ -89,10 +89,15 @@ Computer Fundamentals Playground
 - **Level 8.0 Terminal Ecosystem（24 Steps）**：已开放。回答 "Where am I?"——GUI vs CLI、Terminal/Shell/Program/Process/OS 骨架、Windows Terminal / PowerShell / CMD / Git Bash / WSL / VS Code integrated terminal 辨析、Permission/Privilege/Elevation、五层诊断法；含关系大图、Unix/Linux/WSL 概念与 What-is-it-NOT 题。
 - **Level 8.1 Command Line Foundations（30 Steps）**：已开放。回答 "What am I talking to?"——打字时发生什么、容器与住客、CMD/PowerShell/Bash 口音辨析、GUI↔Terminal 互证。
 - **Level 8.2 Command Line as a Language（29 Steps）**：已开放。回答 "How do I speak to it?"——命令的词源与语言感、command/subcommand/option/argument 四件套、引号、code . 与 Terminal 启动 GUI 程序、错误诊断。
-- 虚拟终端引擎已支持 touch / cat / cp / mv / rm（-r），ls 对选项给出提示分支。
+- **Level 8.3 Command Syntax（28 Steps）**：已开放。回答 "How is a sentence built?"——句法渐进主线（pwd → cd Documents → ls -l → rm -r oldfolder → git commit -m "hello"）、option vs argument 双重判据、subcommand 工具箱直觉、pattern 不是法律、五步自问法、Unknown Command Challenge；毕业任务 git init → git commit -m。
+- **Level 8.4 Command Line in Practice（30 Steps）**：已开放。回答 "Can I write one myself?"——10 个 PowerShell 实操任务（导航 / 引号 / 通配符 / 安全删除 / GUI 召唤 / 毕业建家链），终端状态跨任务累积。
+- 虚拟终端引擎已支持 touch / cat / cp / mv / rm（-r）、引号参数、`*` `?` 通配符、git init / commit -m / status；ls 对选项给出提示分支。
 
 ## 10. Future Roadmap
 
+- **Module C 续：8.5 → 8.7（Bash 分阶段引入策略）**：当前实操主线只有 PowerShell——目标是 Command Line fundamentals → PowerShell → Bash basics → Git Bash → WSL / Ubuntu / Bash。Bash **不作为独立门槛**出现，而是渐进对照引入：
+  - **8.5 Same Computer, Different Shells（只设计，未实现）**：PowerShell ↔ Bash 对照（cd↔cd、Copy-Item↔cp、Remove-Item↔rm、Get-Location↔pwd、Get-ChildItem↔ls），让用户发现「命令行是大概念，PowerShell / Bash 是不同方言」。明确不要求会 Bash，只观察对照。
+  - **8.6 Git Bash**、**8.7 WSL / Ubuntu / Bash**：更晚实现。
 - **Module D Git & GitHub（Levels 9–15）**：Git mental model → GitHub → repository → add/commit → remote/push/pull（含 fetch vs pull 可视化）→ 分支合并 → 阅读真实仓库。
 - **Module E Development Environment（16–17）**：VS Code → LaTeX 工具链（.tex → compiler → .pdf；MiKTeX / latexmk / Perl 各是什么）。LaTeX 不单独成 Module，作为「编译器 + 环境变量 + PATH」mental model 的练兵场；用户真实素材（`简历.tex`、`LaTeX-Workshop-2026.zip`）在虚拟文件系统中已埋伏笔，Module 05 回收。之后再教 LaTeX Basics 最小集（`\documentclass`、`\section`、公式、中文排版）。
 - **Module F–I**：网络基础 → Windows 系统工具 → WSL & Linux → 排查综合（command not found / permission denied / not a git repository 诊断训练）→ 最终挑战。
@@ -105,7 +110,10 @@ Computer Fundamentals Playground
   - Level 8.0 — *Where am I?*（终端生态：我在哪、周围都是什么）
   - Level 8.1 — *What am I talking to?*（我在和谁说话：容器、shell、住客）
   - Level 8.2 — *How do I speak to it?*（怎么对它说话：命令的结构与语言）
+  - Level 8.3 — *How is a sentence built?*（一句话怎么搭：句法拆解，五步自问法）
+  - Level 8.4 — *Can I write one myself?*（我能不能自己写出一条命令：实操）
   - 后续 Level 立项时先写下一句话问题，再排 Step。
+- **已介绍 ≠ 已学会（v1.5 新增）**：一个概念在某一关出现过，不代表用户已掌握——每个概念必须有**独立的检验环节**（反向组装、为什么题、陌生场景挑战）。试玩反馈优先于课程假设：如果反馈暴露出知识漏洞，先补漏洞（可以为补漏洞新增 Level / 调整编号），不硬按原计划推进。
 - **Mental model 优先**：每个 concept 配 visual diagram；每个 terminal 任务配 internals（电脑内部发生了什么）；抽象概念必须有类比（门禁/邮寄地址/工作台）。
 - **Question-driven curriculum**：题型服务于认知目标——词源用 matching/fill、结构用 multiselect、流程用 ordering、辨析用 multiselect/predict、动手用 terminal、综合用 scenario predict。
 - **难度递增**：从 pwd / cd / mkdir 开始，再进入 git commit -m；先 predict 再 terminal 实操；错误诊断题放在概念之后。
