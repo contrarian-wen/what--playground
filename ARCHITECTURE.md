@@ -91,13 +91,24 @@ Computer Fundamentals Playground
 - **Level 8.2 Command Line as a Language（29 Steps）**：已开放。回答 "How do I speak to it?"——命令的词源与语言感、command/subcommand/option/argument 四件套、引号、code . 与 Terminal 启动 GUI 程序、错误诊断。
 - **Level 8.3 Command Syntax（28 Steps）**：已开放。回答 "How is a sentence built?"——句法渐进主线（pwd → cd Documents → ls -l → rm -r oldfolder → git commit -m "hello"）、option vs argument 双重判据、subcommand 工具箱直觉、pattern 不是法律、五步自问法、Unknown Command Challenge；毕业任务 git init → git commit -m。
 - **Level 8.4 Command Line in Practice（30 Steps）**：已开放。回答 "Can I write one myself?"——10 个 PowerShell 实操任务（导航 / 引号 / 通配符 / 安全删除 / GUI 召唤 / 毕业建家链），终端状态跨任务累积。
+- **Level 8.5 Same Computer, Different Shells（36 Steps）**：已开放。回答 "Why do shells speak different dialects?"——Alias 机制、PowerShell ↔ Bash 核心对照、提示符认环境、Git Bash vs WSL 两个世界、option 品味差异、CMD 第三方言、三步翻译协议、Unknown Command Challenge（grep / python -m / tar）跨方言五步自问法；23 个互动题 + 4 道复习 quiz，纯观察关卡不要求会写 Bash。
 - 虚拟终端引擎已支持 touch / cat / cp / mv / rm（-r）、引号参数、`*` `?` 通配符、git init / commit -m / status；ls 对选项给出提示分支。
 
 ## 10. Future Roadmap
 
-- **Module C 续：8.5 → 8.7（Bash 分阶段引入策略）**：当前实操主线只有 PowerShell——目标是 Command Line fundamentals → PowerShell → Bash basics → Git Bash → WSL / Ubuntu / Bash。Bash **不作为独立门槛**出现，而是渐进对照引入：
-  - **8.5 Same Computer, Different Shells（只设计，未实现）**：PowerShell ↔ Bash 对照（cd↔cd、Copy-Item↔cp、Remove-Item↔rm、Get-Location↔pwd、Get-ChildItem↔ls），让用户发现「命令行是大概念，PowerShell / Bash 是不同方言」。明确不要求会 Bash，只观察对照。
-  - **8.6 Git Bash**、**8.7 WSL / Ubuntu / Bash**：更晚实现。
+- **Module C 续：8.6 → 8.7（Bash 分阶段引入策略，8.5 已落地）**：实操主线从 PowerShell 单线扩展为 PowerShell → Bash 双轨——目标是 Command Line fundamentals → PowerShell → Bash basics → Git Bash → WSL / Ubuntu / Bash。Bash **不作为独立门槛**出现，而是渐进对照引入。8.5 已完成「对照观察」阶段；8.6 / 8.7 的正式设计如下（只设计，未实现）：
+  - **8.6 Git Bash — *Can I actually use another shell?***
+    - Learning objectives：① 在 VS Code / Windows Terminal 里亲手打开 Git Bash 标签页；② 用 Bash 完成 8.4 同款任务链（pwd / ls / cd / mkdir / touch / cp / mv / rm -r / 通配符），体验「mental model 全部通用、只换词汇」；③ 路径翻译实战（/c/Users/... 与 C:\Users\... 互换）；④ 理解 Git Bash 是 Windows 程序（MINGW64、能看到 C 盘、不能跑 apt）。
+    - Concept map：Terminal（容器，复用 8.0）→ Git Bash（Bash 方言的 Windows 宿主）→ Windows 文件系统（/c 翻译层）。与 8.5 对照表直接挂钩：8.5 连过 8 遍的字母表在这里变成手写输入。
+    - Prerequisite：8.4（PowerShell 实操）+ 8.5（对照表与翻译协议）。前置检查：能独立完成 8.4 毕业建家链、能口头说出 5 组 PowerShell↔Bash 对照。
+    - Interaction design：terminal 任务复用现有虚拟引擎（新增「bash 模式」开关：提示符变为 MINGW64 样式、mkdir/touch/cp/mv/rm 按 Bash 词汇解析、路径接受 /c/ 写法——引擎层小改，数据层不动）；题型以「翻译 → 输入」两步走（先 fill 翻译、再 terminal 实操同一条命令）。
+    - 不做：不教 apt / sudo / 权限系统 / 管道进阶——那些属于 8.7 的 Linux 世界。
+  - **8.7 WSL — *What changes when the shell is running inside Linux?***
+    - Learning objectives：① 理解 WSL = 完整 Linux 虚拟机（与 Git Bash 的本质区别，8.5 已埋伏笔）；② home 目录、/home vs /mnt/c 双向桥接；③ 最少 Linux 生存词汇（ls -la、apt、which、man --help 文化）；④ 最终辨析 WSL ≠ Terminal ≠ Bash ≠ VS Code（8.0 五层模型收口）。
+    - Concept map：Windows（宿主 OS）↔ WSL2（轻量虚拟机）→ Ubuntu（Guest OS）→ Bash（shell）→ Linux 文件系统（/home、/mnt/c 是 Windows 的挂载点）。
+    - Prerequisite：8.6 完成。前置检查：能在 Git Bash 里完成文件操作链、能解释 /c/Users 与 C:\Users 的翻译关系。
+    - Interaction design：以「两个世界的桥」为主线（explorer.exe . 在 WSL 里能召唤 Windows GUI、code . 能打开 VS Code——8.4 技能直接迁移）；terminal 引擎新增「wsl 模式」是可选增强，若工程量过大则以 clickmap / predict 模拟 WSL 窗口为主，terminal 实操留在 Git Bash 模式。
+    - 不做：不展开 systemd / 进程管理 / shell 脚本编程；不教包管理器细节（apt 只到「能装软件」一层）。这些属于 Module 04 Linux & WSL（ROADMAP H）的正式内容。
 - **Module D Git & GitHub（Levels 9–15）**：Git mental model → GitHub → repository → add/commit → remote/push/pull（含 fetch vs pull 可视化）→ 分支合并 → 阅读真实仓库。
 - **Module E Development Environment（16–17）**：VS Code → LaTeX 工具链（.tex → compiler → .pdf；MiKTeX / latexmk / Perl 各是什么）。LaTeX 不单独成 Module，作为「编译器 + 环境变量 + PATH」mental model 的练兵场；用户真实素材（`简历.tex`、`LaTeX-Workshop-2026.zip`）在虚拟文件系统中已埋伏笔，Module 05 回收。之后再教 LaTeX Basics 最小集（`\documentclass`、`\section`、公式、中文排版）。
 - **Module F–I**：网络基础 → Windows 系统工具 → WSL & Linux → 排查综合（command not found / permission denied / not a git repository 诊断训练）→ 最终挑战。
@@ -112,7 +123,9 @@ Computer Fundamentals Playground
   - Level 8.2 — *How do I speak to it?*（怎么对它说话：命令的结构与语言）
   - Level 8.3 — *How is a sentence built?*（一句话怎么搭：句法拆解，五步自问法）
   - Level 8.4 — *Can I write one myself?*（我能不能自己写出一条命令：实操）
+  - Level 8.5 — *Why do shells speak different dialects?*（为什么 shell 说不同方言：跨方言观察与翻译）
   - 后续 Level 立项时先写下一句话问题，再排 Step。
+- **先建 mental model，再增词汇（v1.6 新增，Principle 2）**：Command Line 的 mental model（句法四件套、cwd、路径、引号、通配符）跨方言、跨 Level 保值；词汇（具体命令）才是会过时的表层。新增内容时优先扩展模型（新场景、新方言、新题型），而不是堆新命令清单；每种新词汇必须挂在已建立的模型结构上教（8.5 的翻译协议 = 8.3 句法模型 + 对照表词汇）。
 - **已介绍 ≠ 已学会（v1.5 新增）**：一个概念在某一关出现过，不代表用户已掌握——每个概念必须有**独立的检验环节**（反向组装、为什么题、陌生场景挑战）。试玩反馈优先于课程假设：如果反馈暴露出知识漏洞，先补漏洞（可以为补漏洞新增 Level / 调整编号），不硬按原计划推进。
 - **Mental model 优先**：每个 concept 配 visual diagram；每个 terminal 任务配 internals（电脑内部发生了什么）；抽象概念必须有类比（门禁/邮寄地址/工作台）。
 - **Question-driven curriculum**：题型服务于认知目标——词源用 matching/fill、结构用 multiselect、流程用 ordering、辨析用 multiselect/predict、动手用 terminal、综合用 scenario predict。

@@ -4858,6 +4858,551 @@ const LEVELS = [
     }
   ]
 }
+,
+{
+  id: "8.5",
+  module: "02 · Command Line",
+  title: "Same Computer, Different Shells · 同一台电脑，不同方言",
+  en: "Same Computer, Different Shells",
+  summary: "建立跨方言认知：Command Line 是大概念，PowerShell / Bash / CMD 是不同的 shell 方言。通过大量对照、翻译和陌生命令拆解练习，获得「读懂另一种 shell」的能力——不要求会写 Bash。",
+  steps: [
+    { type: "concept",
+      title: "开幕：同一台电脑，不止一种 shell",
+      body: `
+        <p>到上一关为止，你写的每一行命令都是 <strong>PowerShell 方言</strong>。但现在有一个重要事实要放进你的 mental model：</p>
+        <p style="text-align:center;margin:14px 0;"><strong>同一台电脑</strong><br>↓<br><strong>可以运行不同的 shell</strong><br>↓<br><strong>每种 shell 有自己的词汇和语法（方言）</strong></p>
+        <p>你的电脑里至少住着三位「翻译官」：<strong>PowerShell</strong>（Windows 现代主力）、<strong>CMD</strong>（Windows 老字号）、<strong>Bash</strong>（住在 Git Bash 和 WSL 里）。它们面对<strong>同一棵文件树</strong>，说的却是<strong>不同的语言</strong>。</p>
+        <p><strong>本关契约：</strong>这一关<strong>不要求你学会 Bash</strong>。你的训练目标是「观察力」——看到另一种方言的命令，能认出它、拆出结构、找到 PowerShell 等价说法。写 Bash 是 8.6 以后的事。</p>`,
+      key: "<strong>Command Line 是大概念；PowerShell / Bash / CMD 是不同方言。</strong>本关练「读懂」，不练「会说」。"
+    },
+    { type: "predict",
+      title: "同一个意图，不同的说法",
+      scenario: `你想「列出当前文件夹里有什么」。在 PowerShell 里，这个动作的<strong>正式命令名</strong>是什么？（8.4 你一直在用它，但可能没注意它的真名）`,
+      options: [
+        { t: "Get-ChildItem", ok: true, why: "这是正式名：Get（取）+ ChildItem（孩子成员）。Verb-Noun 命名是 PowerShell 的家规。" },
+        { t: "Show-Files", ok: false, why: "PowerShell 动词表里没有 Show-Files 这个词。" },
+        { t: "Open-Folder", ok: false, why: "那是打开文件夹（GUI 动作），不是列出内容。" },
+        { t: "List-All", ok: false, why: "听起来合理，但 PowerShell 的真名是 Get-ChildItem。" }
+      ],
+      explain: `答案是 <span class="term-inline">Get-ChildItem</span>。但你一定想说：「我一直打的明明是 <span class="term-inline">ls</span>！」——没错，下一题就拆这个魔法。`,
+      hints: [
+        "8.4 你打的每一句 ls，背后都是它在干活",
+        "PowerShell 家规：动词-名词（Verb-Noun）两个词拼在一起",
+        "Answer: Get-ChildItem"
+      ]
+    },
+    { type: "concept",
+      title: "Alias 别名：一个命令的多个小名",
+      body: `
+        <p>在 PowerShell 里，<span class="term-inline">ls</span>、<span class="term-inline">dir</span>、<span class="term-inline">gci</span> 这三个输入，最终调动的都是同一个 <strong>Get-ChildItem</strong>。它们叫 <span class="term-inline">alias</span>（别名）——shell 在<strong>执行前</strong>把小名换成正式名，程序只知道正式名。</p>
+        <p>为什么 PowerShell 要给 Get-ChildItem 准备 ls、dir 这种小名？因为<strong>照顾从 CMD 和 Bash 世界过来的人</strong>——你打 ls 也能用。</p>
+        <p>⚠️ <strong>关键提醒：</strong>你在 PowerShell 里打 ls，<strong>不等于</strong>你在学 Bash。那只是 PowerShell 借用了 Bash 的单词当小名。<strong>碰巧长得像 ≠ 是同一种语言。</strong>这正是很多初学者「以为自己在写 Bash」的误会来源。</p>`,
+      key: "<strong>Alias = shell 的「小名替换表」，发生在执行之前。</strong>PowerShell 的 ls 是借词，不是 Bash。"
+    },
+    { type: "multiselect",
+      title: "Spot the Aliases：哪些输入最终都是 Get-ChildItem？",
+      scenario: `在 Windows PowerShell 里，下面哪些输入会被 alias 机制换成 <span class="term-inline">Get-ChildItem</span> 去执行？（多选）`,
+      options: [
+        { t: "ls", ok: true },
+        { t: "dir", ok: true },
+        { t: "gci", ok: true },
+        { t: "type", ok: false, why: "type 是 Get-Content（读文件内容）的别名，不是列目录。" },
+        { t: "cat", ok: false, why: "cat 也是 Get-Content 的别名——又一个从别的语言借来的小名。" },
+        { t: "List", ok: false, why: "PowerShell 没有这个别名。" }
+      ],
+      explain: `ls / dir / gci 三个小名都指向 Get-ChildItem；type / cat 指向 Get-Content。注意体会这种命名风格：<strong>Bash 用短单词（ls、cat），PowerShell 用 Verb-Noun（Get-ChildItem、Get-Content）+ 缩写小名</strong>。`,
+      hints: [
+        "在 PowerShell 窗口里输入 Get-Alias 可以看到整张替换表",
+        "dir 是 CMD 时代的遗产，gci 是 Get-ChildItem 的首字母缩写",
+        "Answer: ls、dir、gci"
+      ]
+    },
+    { type: "concept",
+      title: "对照表出场：同一件事的两种说法",
+      body: `
+        <p>学第二种方言，最快的入口是<strong>对照表</strong>——同一个意图，左列 PowerShell 说法，右列 Bash 说法：</p>
+        <table class="cmp-table">
+          <tr><th>意图</th><th>PowerShell</th><th>Bash</th></tr>
+          <tr><td>我在哪？</td><td>Get-Location</td><td>pwd</td></tr>
+          <tr><td>这有什么？</td><td>Get-ChildItem / ls</td><td>ls</td></tr>
+          <tr><td>去那</td><td>Set-Location / cd</td><td>cd</td></tr>
+          <tr><td>建文件夹</td><td>New-Item -ItemType Directory / mkdir</td><td>mkdir</td></tr>
+          <tr><td>建空文件</td><td>New-Item</td><td>touch</td></tr>
+          <tr><td>复制</td><td>Copy-Item / cp</td><td>cp</td></tr>
+          <tr><td>移动/改名</td><td>Move-Item / mv</td><td>mv</td></tr>
+          <tr><td>删除</td><td>Remove-Item / rm</td><td>rm</td></tr>
+          <tr><td>看文件内容</td><td>Get-Content / cat</td><td>cat</td></tr>
+        </table>
+        <p>先别背！你会发现一件更重要的事（下一题开始练）：<strong>左边很多「cp / mv / rm」其实也是 PowerShell 的别名</strong>——PowerShell 很努力地想让你用旧习惯也能活。</p>`,
+      key: "对照表不是背诵任务，是<strong>翻译字典</strong>——真正要带走的是「意图 → 两种说法」的映射方式。"
+    },
+    { type: "matching",
+      title: "Matching：核心对照 8 连",
+      scenario: `把每个 PowerShell 命令连到它的 Bash 搭档。这是本关的「字母表」，连熟了后面全是送分题。`,
+      pairs: [
+        { l: "Get-Location", r: "pwd" },
+        { l: "Get-ChildItem", r: "ls" },
+        { l: "Set-Location", r: "cd" },
+        { l: "Copy-Item", r: "cp" },
+        { l: "Move-Item", r: "mv" },
+        { l: "Remove-Item", r: "rm" },
+        { l: "Get-Content", r: "cat" },
+        { l: "New-Item（建空文件）", r: "touch" }
+      ],
+      choices: ["pwd", "ls", "cd", "cp", "mv", "rm", "cat", "touch", "grep", "mkdir -p"],
+      explain: `规律自己长出来：<strong>PowerShell = 动词-名词全称；Bash = 短词根缩写</strong>。注意 New-Item 那格——Bash 的 touch 在 PowerShell 没有同名别名，只能 New-Item，这是个不对称点，马上会考到。`,
+      key: "Verb-Noun ↔ 短词根：两种命名哲学的对照。",
+      hints: [
+        "先连你 100% 确定的：cd、pwd、ls",
+        "Copy/Move/Remove 对 cp/mv/rm，词根一模一样",
+        "Answer: Get-Location→pwd / Get-ChildItem→ls / Set-Location→cd / Copy-Item→cp / Move-Item→mv / Remove-Item→rm / Get-Content→cat / New-Item→touch"
+      ]
+    },
+    { type: "predict",
+      title: "Your Turn：反向查询",
+      scenario: `你在网上看到一段 Bash 教程写着 <span class="term-inline">pwd</span>。你在 PowerShell 里想用「正式的 PowerShell 说法」做同一件事，该输入什么？`,
+      options: [
+        { t: "Get-Location", ok: true, why: "pwd 在 PowerShell 里恰好也是别名，但正式名是 Get-Location。" },
+        { t: "Show-Location", ok: false, why: "没有这条命令。PowerShell 的「看/取」动词是 Get。" },
+        { t: "pwd 在 PowerShell 里不能用", ok: false, why: "能用——pwd 正是 Get-Location 的别名。这正是方言互相借词的例子。" },
+        { t: "Where-Am-I", ok: false, why: "很人性化，但不是命令。" }
+      ],
+      explain: `答案 Get-Location——但注意 C 选项为什么错：<strong>pwd 在 PowerShell 里同样能跑</strong>（它是别名）。所以「翻译」不一定是必须的，有时两种方言碰巧说同一个词。判断要不要翻译的标准：<strong>PowerShell 报不认得时，才必须翻译</strong>。`,
+      hints: [
+        "「我在哪」的 PowerShell 正式名：Get-___",
+        "别被「pwd 能不能用」绕进去——题目问的是正式说法",
+        "Answer: Get-Location"
+      ]
+    },
+    { type: "fill",
+      title: "Translate：第一条 Bash → PowerShell",
+      scenario: `一段 Bash 脚本里有这么一句：<br><span class="term-inline">cp notes.txt backup.txt</span><br>你要在 PowerShell 里做<strong>完全一样的事</strong>。用 PowerShell 的正式命令写出等价命令：<br><span class="term-inline">______ notes.txt backup.txt</span>`,
+      before: ``,
+      after: ` notes.txt backup.txt`,
+      answer: ["copy-item", "copy", "cp"],
+      explain: `空格里是程序名：<span class="term-inline">Copy-Item</span>。三步翻译协议第一案：① 认出 cp 是「复制」（词根 copy）→ ② 查对照表 Copy-Item ↔ cp → ③ argument 原样照搬（两种方言的文件参数长得一样）。<strong>翻译时 program 换、argument 不换。</strong>`,
+      hints: [
+        "cp 的词根是 copy——PowerShell 的动词正是 Copy",
+        "格式：Copy-Item 源 目标",
+        "Answer: Copy-Item notes.txt backup.txt"
+      ],
+      key: "翻译协议：<strong>program 换成目标方言的说法，argument 原样保留。</strong>"
+    },
+    { type: "concept",
+      title: "为什么词汇差这么多？两套家谱",
+      body: `
+        <p>同样的「删文件」，为什么一边是 <span class="term-inline">Remove-Item</span>，一边是 <span class="term-inline">rm</span>？因为它们来自两个世界：</p>
+        <table class="cmp-table">
+          <tr><th></th><th>PowerShell</th><th>Bash</th></tr>
+          <tr><td>出生地</td><td>2006，微软（Windows / .NET 世界）</td><td>1989，GNU 项目（Unix / Linux 世界）</td></tr>
+          <tr><td>设计哲学</td><td>系统化：Verb-Noun，人人能读懂</td><td>打字优先：越短越好，历史包袱当特色</td></tr>
+          <tr><td>命令长相</td><td>Get-ChildItem、Remove-Item</td><td>ls、rm（很多是 1970s 电信时代的遗产）</td></tr>
+          <tr><td>跨界情况</td><td>为照顾老用户准备了别名</td><td>Bash 不知道 PowerShell 的存在</td></tr>
+        </table>
+        <p><strong>学mental model 的角度：</strong>词汇不同只是「表面语法」，底下共享同一套结构——program / subcommand / option / argument（8.3 学的）、cwd / 路径 / 通配符（8.4 学的）在两种方言里<strong>全部通用</strong>。你已经在两种方言里各学了一次，只是自己不知道。</p>`,
+      key: "方言差异在<strong>词汇层</strong>；mental model 层（句法、路径、cwd）是<strong>跨方言通用</strong>的。"
+    },
+    { type: "concept",
+      title: "听口音：提示符是 shell 的身份证",
+      body: `
+        <p>不用打开任何设置，<strong>看一眼提示符就知道你在跟哪种方言说话</strong>：</p>
+        <table class="cmp-table">
+          <tr><th>提示符长相</th><th>环境</th></tr>
+          <tr><td><code>PS C:\Users\YOGA&gt;</code></td><td>PowerShell（PS 是徽章）</td></tr>
+          <tr><td><code>C:\Users\YOGA&gt;</code>（光秃秃，无 PS）</td><td>CMD（老花窗）</td></tr>
+          <tr><td><code>YOGA@DESKTOP MINGW64 ~/Desktop (main)</code></td><td>Git Bash（MINGW64 是祖籍证明）</td></tr>
+          <tr><td><code>yoga@DESKTOP:~$</code></td><td>WSL Ubuntu（user@host 是 Linux 家规）</td></tr>
+        </table>
+        <p>回忆 8.0：窗口（Terminal）是容器，shell 是住客。<strong>同一个 Windows Terminal 窗口，可以换住客</strong>——点标签页旁边的 ＋ 号旁边的 ⌄ 就能选 PowerShell / CMD / Git Bash。容器不变，口音随住客变。</p>`,
+      key: "<strong>容器看窗口，方言看提示符。</strong>PS=PowerShell、裸路径&gt;=CMD、MINGW64=Git Bash、user@host$=Linux 家族。"
+    },
+    { type: "matching",
+      title: "Matching：听提示符认环境",
+      scenario: `你接管了同事的电脑，看到四个终端窗口的提示符。把每个提示符连到它对应的环境。`,
+      pairs: [
+        { l: "PS C:\Users\Wen>", r: "PowerShell" },
+        { l: "C:\Users\Wen>", r: "CMD" },
+        { l: "Wen@LAPTOP MINGW64 /c/Users/Wen", r: "Git Bash" },
+        { l: "wen@LAPTOP:~$", r: "WSL (Ubuntu)" }
+      ],
+      choices: ["PowerShell", "CMD", "Git Bash", "WSL (Ubuntu)", "VS Code 编辑器", "Python"],
+      explain: `四个标志各管一段：<strong>PS 徽章</strong> → PowerShell；<strong>光秃秃的路径 + &gt;</strong> → CMD；<strong>MINGW64</strong> → Git Bash（MinGW 是「让 Bash 住在 Windows」的技术）；<strong>user@host + $</strong> → Linux 家族。后两个干扰项（VS Code / Python）根本不是 shell。`,
+      key: "提示符 = 方言口音：见 PS 知 PowerShell，见 MINGW64 知 Git Bash，见 user@host 知 Linux。",
+      hints: [
+        "先找最显眼的标志：PS、MINGW64、@",
+        "光秃秃的路径后面直接跟 >，是老 CMD 的风格",
+        "Answer: PS→PowerShell / 裸路径>→CMD / MINGW64→Git Bash / user@host→WSL"
+      ]
+    },
+    { type: "predict",
+      title: "认环境实战",
+      scenario: `你打开一个终端，提示符是 <span class="term-inline">wen@DESKTOP-K2P:~$</span>。你现在最可能在什么环境里？`,
+      options: [
+        { t: "WSL（Windows 里的 Ubuntu）", ok: true, why: "user@host:~$ 是 Linux 家族的标准提示符，~ 表示 home 目录。" },
+        { t: "PowerShell", ok: false, why: "PowerShell 一定有 PS 徽章。" },
+        { t: "CMD", ok: false, why: "CMD 是路径 + >，没有 user@host 和 $。" },
+        { t: "Git Bash", ok: false, why: "Git Bash 的提示符带 MINGW64 字样。" }
+      ],
+      explain: `user@host:~$ 三连：@ 分隔用户名和电脑名、~ 是 home 目录、$ 表示普通用户。<strong>看到这个长相，你就是站在 Linux 世界里</strong>——哪怕窗口外面还是 Windows。这正是 8.7 WSL 要展开的世界。`,
+      hints: [
+        "找三个标志：@、~、$",
+        "MINGW64 字样在不在？",
+        "Answer: WSL（Ubuntu）"
+      ]
+    },
+    { type: "predict",
+      title: "~ 是什么？跨方言同源词",
+      scenario: `在 Git Bash 和 WSL 里，提示符里常出现一个 <span class="term-inline">~</span>。它代表什么？`,
+      options: [
+        { t: "当前用户的 home 目录", ok: true, why: "~ 是「我家」的缩写：Git Bash 里是 C:\\Users\\你的名字，WSL 里是 /home/你的名字。" },
+        { t: "C 盘根目录", ok: false, why: "那是 /c 或 C:\\，不是 ~。" },
+        { t: "桌面", ok: false, why: "桌面只是 home 里的一个子文件夹。" },
+        { t: "上一个访问过的目录", ok: false, why: "那是 -（cd -）。~ 从不变心，永远指 home。" }
+      ],
+      explain: `~ 是 Bash 世界的「我家」速记。有意思的是 PowerShell 也认这个亲戚：<span class="term-inline">cd ~</span> 在 PowerShell 里同样能回家——<strong>同一个符号，两种方言都懂</strong>。这种「同源词」是方言间的免费福利。`,
+      hints: [
+        "提示符出现 ~ 时，pwd 一下看看你在哪",
+        "想想「我的文档」住在谁里面",
+        "Answer: 当前用户的 home 目录"
+      ]
+    },
+    { type: "concept",
+      title: "Bash 住在两间不同的房里",
+      body: `
+        <p>你的电脑上有<strong>两个</strong>说 Bash 方言的地方，千万别合并成一个：</p>
+        <table class="cmp-table">
+          <tr><th></th><th>Git Bash</th><th>WSL (Ubuntu)</th></tr>
+          <tr><td>本质</td><td>一个 Windows 程序（git 的赠品）</td><td>一台装进 Windows 的<strong>完整 Linux 虚拟机</strong></td></tr>
+          <tr><td>看到的文件</td><td>Windows 的文件（C:\Users\...）</td><td>Linux 自己的文件系统（/home/...）</td></tr>
+          <tr><td>路径写法</td><td>/c/Users/Wen（翻译腔）</td><td>/home/wen（真 Linux 写法）</td></tr>
+          <tr><td>能跑什么</td><td>Windows 程序 + 一部分 Linux 命令</td><td>真正的 Linux 程序（apt、systemd……）</td></tr>
+        </table>
+        <p>同一个 pwd，Git Bash 回答 <span class="term-inline">/c/Users/Wen</span>，WSL 回答 <span class="term-inline">/home/wen</span>。<strong>方言相同，脚下的世界不同。</strong>8.6 先进 Git Bash（轻、够用的训练场），8.7 再进 WSL（真正的 Linux）。</p>`,
+      key: "Git Bash = Windows 程序说 Bash 腔；WSL = 真正的 Linux 说 Bash 腔。<strong>方言相同，宿主不同。</strong>"
+    },
+    { type: "predict",
+      title: "路径翻译：同一个家的两种地址",
+      scenario: `在 Git Bash 里，哪个路径指的就是 PowerShell 里的 <span class="term-inline">C:\Users\Wen</span>？`,
+      options: [
+        { t: "/c/Users/Wen", ok: true, why: "Git Bash 的翻译规则：盘符 C: 变成 /c，反斜杠 \\ 变成正斜杠 /。" },
+        { t: "/home/wen", ok: false, why: "那是 WSL 里的地址——Linux 世界自己的家，不是 C 盘的翻译。" },
+        { t: "C:\\Users\\Wen 原样输入", ok: false, why: "Git Bash 大多认 \\ 写法，但 /c/Users/Wen 才是它的母语写法；这题考的是『母语』。" },
+        { t: "\\c\\Users\\Wen", ok: false, why: "方向反了：是 /c 不是 \\c。" }
+      ],
+      explain: `翻译规则就两条：<strong>① 盘符 C: → /c（D: → /d）② \\ → /</strong>。所以 C:\Users\Wen → /c/Users/Wen。在 WSL 里规则不同——C 盘被挂在 /mnt/c，那就是 8.7 的地界了。`,
+      hints: [
+        "先变盘符：C: 变成什么开头？",
+        "再变方向：\\ 换成 /",
+        "Answer: /c/Users/Wen"
+      ]
+    },
+    { type: "concept",
+      title: "语法细节差异：option 的两种品味",
+      body: `
+        <p>回到 8.3 的句法模型——两种方言的四件套结构<strong>完全一样</strong>，但 option 的「品味」不同：</p>
+        <table class="cmp-table">
+          <tr><th></th><th>PowerShell</th><th>Bash</th></tr>
+          <tr><td>option 风格</td><td>长名：-Recurse、-Force、-ItemType</td><td>短名：-r、-f，GNU 程序另有 --help 长名</td></tr>
+          <tr><td>连用</td><td>一般不连用（-Recurse -Force 分开写）</td><td>爱连用：-rf 就是 -r -f 两个开关</td></tr>
+          <tr><td>option 接值</td><td>-Name 值 或 -Name=值</td><td>-m 值、--message=值、-m值 都有</td></tr>
+        </table>
+        <p>⚠️ 老规矩（8.3 原话）：<strong>pattern 不是法律</strong>。这些只是各方言的「典型品味」，具体程序各有怪癖——读文档永远是对的做法。</p>`,
+      key: "结构通用（program/option/argument），品味各异（长名 vs 短名、分开 vs 连用）。"
+    },
+    { type: "multiselect",
+      title: "归类：谁家的 option？",
+      scenario: `下面这些 option 写法，哪些是典型的 <strong>Bash 方言</strong>？（多选）`,
+      options: [
+        { t: "-rf", ok: true, why: "短名连用是 Bash 的经典姿势（-r -f 合体）。" },
+        { t: "-la", ok: true, why: "ls -la = ls -l -a，连用 + 短名，纯 Bash 品味。" },
+        { t: "--help", ok: true, why: "GNU 双横线长名——Bash 世界的标准求助开关。" },
+        { t: "-Recurse", ok: false, why: "单词完整首字母大写，是 PowerShell 家规。" },
+        { t: "/s", ok: false, why: "斜杠开头是第三方言 CMD 的选项风格（dir /s）——别忽略房间里还有这位老人。" }
+      ],
+      explain: `三个判据：<strong>短名 / 连用 / 双横线长名</strong> → Bash 世界；<strong>完整单词首字母大写</strong> → PowerShell；<strong>/ 开头</strong> → CMD。看到 /s 别慌——那不是路径，是 CMD 在说「包含子文件夹」。`,
+      hints: [
+        "回想对照表：谁爱把 -r -f 写成 -rf？",
+        "/s 这种写法你在 8.x 的任何 PowerShell 内容里见过吗？",
+        "Answer: -rf、-la、--help"
+      ]
+    },
+    { type: "concept",
+      title: "第三方言速览：CMD 还在房间里",
+      body: `
+        <p>别忽略第三位住客。<span class="term-inline">CMD</span>（命令提示符）是 Windows 1987 年的老 shell，今天依然无处不在。它的词汇和品味又不一样：</p>
+        <table class="cmp-table">
+          <tr><th>意图</th><th>CMD</th><th>PowerShell</th><th>Bash</th></tr>
+          <tr><td>列出内容</td><td>dir</td><td>Get-ChildItem / ls</td><td>ls</td></tr>
+          <tr><td>删除</td><td>del / erase</td><td>Remove-Item / rm</td><td>rm</td></tr>
+          <tr><td>复制</td><td>copy</td><td>Copy-Item / cp</td><td>cp</td></tr>
+          <tr><td>选项风格</td><td>/s /q（斜杠！）</td><td>-Recurse</td><td>-r / --recursive</td></tr>
+        </table>
+        <p><strong>为什么提它？</strong>因为你在网上搜「Windows 命令」时，十个答案里有三个是 CMD 的（del、dir /s）——认不出它就会拿错方言的方子。</p>`,
+      key: "CMD：del / dir / copy + 斜杠选项 /s。看到斜杠选项先怀疑 CMD。"
+    },
+    { type: "predict",
+      title: "认方言实战：/s 是谁的？",
+      scenario: `某论坛答案让你运行 <span class="term-inline">dir /s *.txt</span>。凭语法判断，这最可能是<strong>哪种 shell</strong> 的命令？`,
+      options: [
+        { t: "CMD", ok: true, why: "/s 斜杠选项 + dir 命令名，双料 CMD 证据。" },
+        { t: "PowerShell", ok: false, why: "dir 虽是 PowerShell 的别名，但 PowerShell 不认 /s——会报错。这是陷阱项。" },
+        { t: "Bash", ok: false, why: "Bash 说 ls -R（大写 R），不说 dir /s。" },
+        { t: "三种都能跑", ok: false, why: "dir 碰巧都能列目录，但 /s 只有 CMD 认得——整条命令只有 CMD 能消化。" }
+      ],
+      explain: `答案是 CMD。注意陷阱 B：<strong>命令名能跑 ≠ 整条命令能跑</strong>。dir 在 PowerShell 是别名，但 /s 一出来 PowerShell 就傻眼了（它把 /s 当成路径解析）。判断方言要看<strong>整条句子的语法</strong>，不能只看一个单词。`,
+      hints: [
+        "盯住那个斜杠：谁家选项用 /？",
+        "dir 本身说明不了问题——三个 shell 都认得它",
+        "Answer: CMD"
+      ]
+    },
+    { type: "fill",
+      title: "Translate：反向翻译（PowerShell → Bash）",
+      scenario: `你要把一个 PowerShell 命令「翻译」给用 Bash 的同事：<br><span class="term-inline">Remove-Item -Recurse old</span><br>用 Bash 方言写出等价命令：<br><span class="term-inline">______ -r old</span>`,
+      before: ``,
+      after: ` -r old`,
+      answer: ["rm"],
+      explain: `空格填 <span class="term-inline">rm</span>。反向翻译同一协议：① Remove-Item 词根 remove → Bash 短名 rm → ② option 换成 Bash 品味 -Recurse → -r → ③ argument（old）原样。<strong>翻译是双向技能，方向不同难度相同。</strong>`,
+      hints: [
+        "对照表：Remove-Item ↔ ?",
+        "-Recurse 的 Bash 短名是一个字母",
+        "Answer: rm -r old"
+      ]
+    },
+    { type: "concept",
+      title: "最重要的一课：共同点大于差异",
+      body: `
+        <p>练到现在，把镜头拉远：<strong>两种方言共享的东西，比不同的多得多。</strong></p>
+        <table class="cmp-table">
+          <tr><th>层</th><th>跨方言通用？</th><th>例子</th></tr>
+          <tr><td>句法结构（8.3）</td><td>✅ 完全通用</td><td>program / subcommand / option / argument 四件套分析对任何 shell 都成立</td></tr>
+          <tr><td>路径逻辑（8.4 前）</td><td>✅ 概念通用</td><td>cwd、相对/绝对、. 与 .. 一模一样（写法有方言差）</td></tr>
+          <tr><td>当前目录 / 引号 / 通配符</td><td>✅ 概念通用</td><td>引号粘词、* 展开——Bash 和 PowerShell 都干同样的事</td></tr>
+          <tr><td>词汇（动词）</td><td>⚠️ 方言差异最大</td><td>Get-ChildItem vs ls、Remove-Item vs rm</td></tr>
+          <tr><td>option 品味</td><td>⚠️ 风格差异</td><td>-Recurse vs -r、分开写 vs 连用</td></tr>
+        </table>
+        <p><strong>这就是「先学 mental model，再增词汇」的红利：</strong>你的 8.3 / 8.4 训练成果自动跨方言保值。学第二种方言的成本，远低于第一种——你要补的只是左列「词汇」一格。</p>`,
+      key: "Mental model 跨方言通用，词汇才是方言差异所在。<strong>你已经会的东西比你以为的多。</strong>"
+    },
+    { type: "multiselect",
+      title: "同源词盘点：哪些词两种方言几乎一样？",
+      scenario: `下面哪些「词汇」在 PowerShell 和 Bash 里<strong>几乎同名同义</strong>（可以直接照搬或只改大小写）？（多选）`,
+      options: [
+        { t: "cd", ok: true, why: "两家都认，语义完全相同。" },
+        { t: "pwd", ok: true, why: "Bash 原生、PowerShell 别名——同一个词两家都懂。" },
+        { t: "mkdir", ok: true, why: "两家都认（PowerShell 的 mkdir 是 New-Item 的功能封装）。" },
+        { t: "ls", ok: false, why: "小心陷阱：两家都认 ls，但 Bash 的 ls 是真命令、PowerShell 的 ls 是别名——输出格式还不一样。算『碰巧同名』，不是『同一个词』。" },
+        { t: "copy", ok: false, why: "copy 是 CMD 的词；PowerShell 正式说法是 Copy-Item，Bash 是 cp。" },
+        { t: "cat", ok: false, why: "和 ls 同款陷阱：PowerShell 的 cat 是 Get-Content 的别名，Bash 的 cat 是真命令。" }
+      ],
+      explain: `真正通用无阻的词只有 cd / pwd / mkdir 这类「基础动词」。ls / cat 是<strong>高仿</strong>：词形相同、身份不同（真命令 vs 别名）。这提醒你：翻译时遇到「看起来一样」的词，多留一个心眼——它可能在装熟。`,
+      hints: [
+        "问自己：这个词在两边是『原生』还是『别名』？",
+        "cd 和 pwd 在两边各是什么身份？",
+        "Answer: cd、pwd、mkdir"
+      ]
+    },
+    { type: "concept",
+      title: "读 Bash 三步翻译协议（本关毕业证书）",
+      body: `
+        <p>遇到一段 Bash 命令（教程、README、Stack Overflow），按这个协议处理：</p>
+        <p><strong>第 ① 步 · 认 program：</strong>第一个词是对照表里的谁？cp→Copy-Item、rm→Remove-Item、cat→Get-Content。不认识就猜词根（mv=move、mkdir=make directory），再查。</p>
+        <p><strong>第 ② 步 · option 对号：</strong>-r/-f/-rf 这类短名 → PowerShell 长名（-Recurse、-Force）；--help → Get-Help。连用要拆（-la = -l -a）。</p>
+        <p><strong>第 ③ 步 · argument 照搬 + 路径换算：</strong>文件名原样抄；路径按环境换算（/c/Users/Wen ↔ C:\Users\Wen）。</p>
+        <p>拿 <span class="term-inline">grep -i "error" log.txt</span> 试一遍：grep 不认识？没关系——下面三道 Unknown Command Challenge 就练这个。</p>`,
+      key: "<strong>认 program → option 对号 → argument 照搬。</strong>三步之后，任何 Bash 命令你都能读出骨架。"
+    },
+    { type: "fill",
+      title: "Translate 演练 ①：mv",
+      scenario: `Bash 教程：<span class="term-inline">mv draft.txt final.txt</span>（把 draft.txt 改名为 final.txt）。<br>用 PowerShell 正式命令写出等价句：<br><span class="term-inline">______ draft.txt final.txt</span>`,
+      before: ``,
+      after: ` draft.txt final.txt`,
+      answer: ["move-item", "move", "mv"],
+      explain: `mv 词根 = move → <span class="term-inline">Move-Item</span>。Bash 的 mv 一个命令兼「移动」和「改名」两职，PowerShell 的 Move-Item 同样两职——连语义都对齐，这类词翻译起来最舒服。`,
+      hints: [
+        "mv 是哪个英文单词的缩写？",
+        "Move-____ 两个词",
+        "Answer: Move-Item draft.txt final.txt"
+      ]
+    },
+    { type: "fill",
+      title: "Translate 演练 ②：cat（高仿词陷阱）",
+      scenario: `Bash 教程：<span class="term-inline">cat readme.txt</span>（在屏幕上显示 readme.txt 的内容）。<br>用 PowerShell 的<strong>正式命令</strong>写出等价句：<br><span class="term-inline">______ readme.txt</span>`,
+      before: ``,
+      after: ` readme.txt`,
+      answer: ["get-content", "type", "cat"],
+      explain: `正式答案是 <span class="term-inline">Get-Content</span>。陷阱在哪：PowerShell 里打 cat 也真能跑（它是 Get-Content 的别名）——但题目要的是「正式名」。cat 在 PowerShell 是<strong>穿马甲的 Get-Content</strong>，正如 ls 是穿马甲的 Get-ChildItem。认出马甲，才算真读懂。`,
+      hints: [
+        "对照表：Bash 的 cat 对应 PowerShell 哪条正式命令？",
+        "「获取内容」用 PowerShell 的家规怎么说？",
+        "Answer: Get-Content readme.txt"
+      ],
+      key: "高仿词识别：<strong>cat / ls / pwd 在 PowerShell 都是别名马甲</strong>，正式名是 Get-Content / Get-ChildItem / Get-Location。"
+    },
+    { type: "fill",
+      title: "Translate 演练 ③：touch（不对称点）",
+      scenario: `Bash 教程：<span class="term-inline">touch new.txt</span>（建一个空文件 new.txt）。<br>用 PowerShell 写出等价句：<br><span class="term-inline">______ new.txt</span>`,
+      before: ``,
+      after: ` new.txt`,
+      answer: ["new-item", "ni"],
+      explain: `这是对照表里的<strong>不对称点</strong>：Bash 的 touch 在 PowerShell 没有同名别名（打 touch 会报 command not found），必须用 <span class="term-inline">New-Item new.txt</span>。翻译协议的第 ① 步就卡壳时怎么办？——承认「这个程序我不认识」，去搜「PowerShell 等价 touch」。<strong>查不到对应词是常态，查的动作本身就是技能。</strong>`,
+      hints: [
+        "PowerShell 打 touch 会怎样？试试看的心态——对，报错",
+        "「新建」用 PowerShell 家规：New-____",
+        "Answer: New-Item new.txt"
+      ]
+    },
+    { type: "concept",
+      title: "Unknown Command Challenge：规则说明",
+      body: `
+        <p>接下来三道题用的都是<strong>你从没学过</strong>的命令。规矩（呼应 8.3 的五步自问法）：</p>
+        <p>① <strong>形式能确定的</strong>：第一个词是 program、- 开头的是 option——这是句法事实，不靠猜。<br>② <strong>语义能推断的</strong>：argument 是数据、词根可猜大意——这是合理推理，标注「推断」。<br>③ <strong>不能仅凭形式确定的</strong>：某个 option 的确切含义、某个词是 subcommand 还是值——诚实标注「不确定，需查文档」。</p>
+        <p><strong>能区分这三类，就是「会了」的证明。</strong>见过这些命令不算数——网上教程到处都是你没见过的命令。</p>`,
+      key: "面对陌生命令的输出格式：<strong>事实（形式）→ 推断（语义）→ 不确定（查文档）</strong>。"
+    },
+    { type: "predict",
+      title: "Challenge ①：grep -i \"error\" log.txt",
+      scenario: `一段日志教程让你运行 <span class="term-inline">grep -i "error" log.txt</span>。用五步自问法拆完，下面哪个判断<strong>不能仅凭形式确定</strong>、必须查文档或经验？`,
+      options: [
+        { t: "-i 这个 option 的确切含义", ok: true, why: "形式只告诉我们「-i 是个开关」；它到底干什么（实际是 ignore case 忽略大小写）查文档才知道——pattern 不是法律。" },
+        { t: "grep 是 program", ok: false, why: "第一个词是 program，这是句法事实，不用猜。" },
+        { t: "\"error\" 和 log.txt 都是 argument", ok: false, why: "不以 - 开头、跟在命令后，角色就是数据——可以推断（一个是找什么，一个是在哪找）。" },
+        { t: "整条命令里没有 subcommand", ok: false, why: "grep 是单动作程序（像 ls、python），第二个词不是动作菜单——可推断。" }
+      ],
+      explain: `这题考的是「诚实的边界」：<strong>-i 是 option 是事实，-i 是什么意思不是事实</strong>。合理猜测是 ignore case（i 的词根），但猜的要标注「推断」。真正专业的学习者，是那些敢说「这步我不知道」的人。`,
+      hints: [
+        "把每个判断归到三类：事实 / 推断 / 不确定",
+        "- 开头能告诉你「是开关」，能告诉你「什么开关」吗？",
+        "Answer: -i 这个 option 的确切含义"
+      ]
+    },
+    { type: "multiselect",
+      title: "Challenge ① 续：每个 token 的角色",
+      scenario: `对 <span class="term-inline">grep -i "error" log.txt</span> 中的每个 token 选择<strong>正确的角色描述</strong>。（多选）`,
+      options: [
+        { t: "grep = program（第一个词，句法事实）", ok: true },
+        { t: "-i = option（- 开头，句法事实；含义需查文档）", ok: true },
+        { t: "\"error\" = argument（引号粘词，grep 的「找什么」）", ok: true },
+        { t: "log.txt = argument（grep 的「在哪找」）", ok: true },
+        { t: "error 是 -i 的 argument", ok: false, why: "想多了——\"error\" 紧跟的是 grep 本身（找什么），不是开关的值。判断依据：它回答的是「找什么」这个核心问题。" },
+        { t: "整条是「工具箱型」句型（subcommand 结构）", ok: false, why: "grep 是单动作程序，没有 subcommand。第二个词不是动作菜单。" }
+      ],
+      explain: `五问拆解：谁在运行？grep。有 subcommand 吗？没有（单动作程序）。哪部分改变行为？-i。哪部分提供数据？"error"（找什么）和 log.txt（在哪找）。<strong>一个命令带两个 argument 完全正常</strong>——argument 的数量由程序自己规定。`,
+      hints: [
+        "先答句法事实（program / option），再答语义推断（argument 各管什么）",
+        "问自己：-i 需要吃一个值吗？",
+        "Answer: 前四项全选"
+      ]
+    },
+    { type: "predict",
+      title: "Challenge ②：python -m venv env",
+      scenario: `Python 教程让你建虚拟环境：<span class="term-inline">python -m venv env</span>。句法拆解时，哪个 token 的角色<strong>最不能仅凭形式确定</strong>？`,
+      options: [
+        { t: "venv", ok: true, why: "它不带 -、不是第一个词——表面像 argument 或 subcommand，但 -m 这个 option 吃一个「模块名」的值，所以 venv 其实是 -m 的 argument。不看 python 的文档，只凭形式定不死。" },
+        { t: "python", ok: false, why: "第一个词 = program，句法事实。" },
+        { t: "-m", ok: false, why: "- 开头 = option，句法事实。" },
+        { t: "env", ok: false, why: "结尾的普通词 = argument（venv 要建的环境叫什么名字），可推断。" }
+      ],
+      explain: `这是 8.3「option 领养 argument」的实战复刻：<span class="term-inline">-m venv</span> 是一对——-m 开关领养了一个值（要运行哪个模块）。所以真正的结构是 <strong>python（program）+ -m（option）+ venv（-m 的值）+ env（venv 的 argument）</strong>。看不懂 -m 是什么意思？没关系，重要的是你标对了「哪里不确定」。`,
+      hints: [
+        "回想 git commit -m \"hello\"：-m 领养了谁？",
+        "这里 -m 后面紧跟的词，是独立 argument 还是被领养？",
+        "Answer: venv"
+      ]
+    },
+    { type: "multiselect",
+      title: "Challenge ③：tar -xvf project.tar.gz",
+      scenario: `解压教程：<span class="term-inline">tar -xvf project.tar.gz</span>。哪些判断是<strong>可靠的</strong>（事实或高置信推断）？（多选）`,
+      options: [
+        { t: "tar 是 program", ok: true, why: "第一个词，句法事实。" },
+        { t: "-xvf 是 option", ok: true, why: "- 开头，句法事实。而且它是连用体（-x -v -f 三个开关挤在一起）——Bash 品味，8.x 刚学过。" },
+        { t: "project.tar.gz 是 argument", ok: true, why: "普通词收尾 = 数据（对谁操作），可高置信推断。" },
+        { t: "x 代表「解压（extract）」", ok: false, why: "合理猜测（词根对得上），但仍是推断——不查 tar 文档不能当事实。（这题就是考你敢不敢把它留在『推断』栏。）" },
+        { t: "整条命令有 subcommand", ok: false, why: "tar 虽是工具箱型程序，但这条里没出现 subcommand——-xvf 是开关不是动作菜单。" }
+      ],
+      explain: `三连拆开：<strong>-x（模式：extract）-v（verbose 啰嗦模式）-f（file：后面跟文件名）</strong>。注意 -f 也领养了一个 argument（project.tar.gz 是 -f 的值，不是 tar 的直接 argument）——精细到这一层，你就已经超过大多数「用过五年命令行」的人了。`,
+      hints: [
+        "连用体先拆开：-xvf = -x -v -f",
+        "f 很像 file——那 project.tar.gz 是跟谁走的？",
+        "Answer: 前三项可靠"
+      ]
+    },
+    { type: "concept",
+      title: "为什么「读懂 Bash」值得专门练？",
+      body: `
+        <p>你可能会问：我主用 PowerShell，为什么要读懂 Bash？因为真实世界的命令行内容，<strong>绝大多数是 Bash 方言写的</strong>：</p>
+        <ul>
+          <li>网上教程 / Stack Overflow 答案 → 十之八九是 Bash（服务器世界 Linux 占绝对多数）</li>
+          <li>开源项目的 README → 安装命令全是 Bash</li>
+          <li>AI 助手给的命令 → 默认也给 Bash</li>
+          <li>你未来的 Git、Docker、Python 工具链文档 → 示例一律 Bash</li>
+        </ul>
+        <p>所以现阶段你的最优策略不是「学会写 Bash」，而是<strong>「读得懂 + 会翻译」</strong>——把看到的 Bash 当场翻成 PowerShell，活照样干。等你 8.6 进了 Git Bash，「读」会无缝升级成「写」。</p>`,
+      key: "现实世界的命令行内容是 Bash 主导的。<strong>读得懂 + 会翻译</strong>，是当前性价比最高的跨方言技能。"
+    },
+    { type: "predict",
+      title: "综合场景：README 让你 rm -rf",
+      scenario: `某个项目的 README 写着：<span class="term-inline">rm -rf node_modules</span>（删掉依赖文件夹重来）。你现在站在 <strong>PowerShell</strong> 里。最合理的做法是？`,
+      options: [
+        { t: "认出这是 Bash 方言：rm -rf = 递归 + 强删，PowerShell 等价写法是 Remove-Item -Recurse -Force node_modules，然后照样执行", ok: true, why: "完整走了一遍翻译协议：认 program（rm→Remove-Item）、option 对号（-rf→-Recurse -Force，连用体拆开）、argument 照搬。" },
+        { t: "直接在 PowerShell 里原样输入 rm -rf node_modules——rm 是别名，肯定通用", ok: false, why: "半对半错：rm 是别名没错，但 -rf 的解析 PowerShell 和 Bash 并不完全一致（-rf 在 PowerShell 5.1 里是 -r 带值 f 的歧义写法，常报错）。不能赌『肯定通用』。" },
+        { t: "这条命令危险，放弃安装这个项目", ok: false, why: "rm -rf node_modules 是开发日常操作（node_modules 可以随时重新生成），危险度被高估了——当然，理解你为什么要警惕它。" },
+        { t: "把命令里的 / 全换成 \\ 再输入", ok: false, why: "这条命令里根本没有斜杠——把路径规则误用到 option 上了。" }
+      ],
+      explain: `选 A 的关键不是记住 Remove-Item -Recurse -Force，而是<strong>认出了方言、拆出了结构、找到了等价</strong>。就算 A 的具体写法你不记得，你知道该搜「PowerShell 等价 rm -rf」——这就是本关训练出来的本能。`,
+      hints: [
+        "-rf 是什么的连用体？",
+        "对照表里 rm 和 r 各自对应谁？",
+        "Answer: 认出方言 → Remove-Item -Recurse -Force node_modules"
+      ]
+    },
+    { type: "multiselect",
+      title: "最后一辨：方言差异 vs 能力差异",
+      scenario: `最后一组判断。下面哪些是<strong>纯粹的方言差异</strong>（换个 shell 说法不同而已）？哪些是<strong>能力差异</strong>（环境根本做不到）？选出所有「纯方言差异」项。（多选）`,
+      options: [
+        { t: "删文件夹：PowerShell 写 Remove-Item -Recurse，Bash 写 rm -r", ok: true, why: "同一能力两种说法——纯方言差异。" },
+        { t: "列内容：Get-ChildItem 显示几列 vs ls 带颜色", ok: true, why: "词汇不同、输出排版不同——方言（及配置）差异，能力一样。" },
+        { t: "路径写法：C:\\Users\\Wen vs /c/Users/Wen", ok: true, why: "同一个文件夹的两种书写系统——纯方言差异。" },
+        { t: "WSL 能跑 apt install，Git Bash 不能", ok: false, why: "这是能力差异：WSL 是真 Linux 才有 apt；Git Bash 只是 Windows 程序。" },
+        { t: "WSL 的 home 是 /home/wen，Git Bash 的 home 是 C:\\Users\\Wen", ok: false, why: "这看着像方言，实际是『两个不同的世界』——它们说的根本不是一个文件系统。（这正是 8.7 要展开的。）" }
+      ],
+      explain: `判别心法：<strong>问自己「两个 shell 说的是不是同一棵树、同一件事」</strong>——是 → 方言差异（翻译解决）；不是 → 能力/环境差异（要理解两个世界）。把 E 误判成方言差异，是这一关最值得带走的教训。`,
+      hints: [
+        "逐项问：换种说法就能解决吗？",
+        "WSL 和 Git Bash 的 home 是同一个文件夹吗？",
+        "Answer: 前三项是纯方言差异"
+      ]
+    },
+    { type: "ordering",
+      title: "毕业考：五步自问法（跨方言版）",
+      scenario: `8.3 你学过面对陌生命令的五步自问法。现在它升级了——看到一条<strong>陌生 shell 的</strong>命令时，正确的自查顺序是？把下面五步排序：`,
+      items: [
+        { id: "who", t: "谁在运行？（第一个词 = program，认不认识都要先定位）" },
+        { id: "dialect", t: "这是哪种方言？（看提示符 / 选项风格 / 词汇，先知道在翻译谁）" },
+        { id: "sub", t: "它有没有 subcommand？（第二个词是动作菜单还是数据？）" },
+        { id: "split", t: "哪部分改变行为（option）、哪部分提供数据（argument）？哪里标注『不确定』？" },
+        { id: "confirm", t: "不确定的去哪确认？（对照表 / 官方文档 / 搜索『XX 的 PowerShell 等价』）" }
+      ],
+      order: ["who", "dialect", "sub", "split", "confirm"],
+      explain: `和 8.3 版本相比，本关在五步里插入了第 ② 步「先认方言」——<strong>翻译的前提是知道源语言</strong>。五步走完，任何陌生 shell 的任何陌生命令，你都有办法开始拆解。这就是本关毕业证书。`,
+      hints: [
+        "第一步永远不变：谁在运行？",
+        "认 program 之后、拆结构之前，多了一步什么？",
+        "Answer: 谁在运行 → 哪种方言 → 有无 subcommand → 行为与数据拆分 → 去确认"
+      ]
+    },
+    { type: "concept",
+      title: "小结：你已经有了跨方言的眼力",
+      body: `
+        <p>回顾本关训练量：核心对照 8 连、提示符认环境 4 连、双向翻译 5 题、方言归类、陌生命令拆解 3 组（grep / python -m / tar）、综合场景、五步自问法排序。<strong>你现在能做的，是大多数命令行用户一辈子没练过的：面对陌生 shell 的陌生命令，有章法地拆解它。</strong></p>
+        <p>Mental model 大图（补全 8.0 的那张）：</p>
+        <p style="text-align:center;margin:14px 0;">Computer → OS（Windows / Linux）→ Terminal（窗口容器）→ Shell（方言：PowerShell / CMD / Bash）→ Commands（词汇：随方言而变）</p>
+        <p>下一关 <strong>8.6 Git Bash</strong>：观察期结束。你将第一次亲自开口说 Bash 方言——好消息是，字母表（对照表）你已经连过 8 遍了。</p>`,
+      key: "容器看窗口，方言看提示符，词汇查对照表，陌生命令走五步。<strong>8.6：从观察走向实操。</strong>"
+    }
+  ]
+}
+
 
 ];
 
@@ -5415,12 +5960,76 @@ const REVIEWS = {
         { t: "先 cd 到 C:\\", ok: false, why: "反而扩大误伤范围。" } ] }
     ]
   }
+  ,
+  "8.5": {
+    concepts: [
+      "同一台电脑可以运行多种 shell；Command Line 是大概念，PowerShell / CMD / Bash 是不同的方言（词汇 + 语法品味不同）",
+      "Alias 别名：ls / dir / gci → Get-ChildItem，cat / type → Get-Content——发生在执行前的小名替换；PowerShell 的 ls 是借词，不是 Bash",
+      "对照表翻译协议：认 program（词根猜或查表）→ option 对号（-rf→-Recurse -Force，连用体拆开）→ argument 照搬 + 路径换算",
+      "提示符 = 方言口音：PS=PowerShell、裸路径>=CMD、MINGW64=Git Bash、user@host:~$=Linux 家族；容器看窗口，方言看提示符",
+      "Git Bash 是 Windows 程序说 Bash 腔（/c/Users），WSL 是真 Linux 说 Bash 腔（/home）——方言相同，宿主不同，是两个世界",
+      "option 品味：PowerShell 长名单写、Bash 短名连用（-rf=-r -f）；pattern 不是法律，具体程序各有怪癖",
+      "Mental model（句法四件套、cwd、路径、引号、通配符）跨方言通用；词汇层才是方言差异——第二种方言的学习成本远低于第一种",
+      "陌生命令三分类：事实（形式：第一个词是 program、- 开头是 option）→ 推断（语义：词根、argument 角色）→ 不确定（option 确切含义，查文档）"
+    ],
+    commands: [
+      { cmd: "Get-ChildItem ↔ ls", en: "—", zh: "列内容：Verb-Noun 正式名 ↔ Bash 短词（PowerShell 里是别名马甲）" },
+      { cmd: "Get-Location ↔ pwd", en: "—", zh: "我在哪：pwd 在两家都认（PowerShell 为别名）" },
+      { cmd: "Copy-Item ↔ cp / Move-Item ↔ mv / Remove-Item ↔ rm", en: "—", zh: "复制/移动/删除：词根完全对应的翻译对" },
+      { cmd: "Get-Content ↔ cat / New-Item ↔ touch", en: "—", zh: "看内容 / 建空文件；touch 无 PowerShell 别名（不对称点）" },
+      { cmd: "dir /s", en: "—", zh: "CMD 方言证据：dir + 斜杠选项" },
+      { cmd: "grep -i \"error\" log.txt", en: "—", zh: "Unknown Command 拆解样本：单动作 program + 双 argument" },
+      { cmd: "python -m venv env", en: "—", zh: "option 领养 argument 的跨方言复刻：venv 是 -m 的值" },
+      { cmd: "rm -rf node_modules → Remove-Item -Recurse -Force node_modules", en: "—", zh: "README 翻译实战：连用体拆开、逐词对号" }
+    ],
+    terms: [
+      { en: "dialect", zh: "方言", ex: "PowerShell / Bash / CMD：同一概念的不同说法" },
+      { en: "alias", zh: "别名", ex: "ls→Get-ChildItem；执行前的小名替换" },
+      { en: "Verb-Noun", zh: "动词-名词命名", ex: "PowerShell 家规：Get-ChildItem、Remove-Item" },
+      { en: "MINGW64", zh: "Git Bash 的祖籍标志", ex: "提示符里看到它 = Git Bash" },
+      { en: "~ (tilde)", zh: "home 目录速记", ex: "两家都认的同源符号" },
+      { en: "user@host", zh: "Linux 系提示符格式", ex: "wen@DESKTOP:~$" },
+      { en: "翻译协议", zh: "认 program → option 对号 → argument 照搬", ex: "本关毕业证书" },
+      { en: "事实/推断/不确定", zh: "陌生命令三分类", ex: "敢说『不知道』是专业能力的标志" }
+    ],
+    mistakes: [
+      "以为在 PowerShell 里打 ls 就是在学 Bash——那是别名马甲，不是方言",
+      "只看一个单词判断方言（dir 三家都认得，/s 一出来才锁定 CMD）——要看整条句子的语法",
+      "把 /c/Users/Wen 和 /home/wen 当成同一地址的两种写法——前者是 C 盘的翻译，后者是另一个世界",
+      "把 ls / cat 当跨方言同源词——词形同、身份不同（真命令 vs 别名），输出格式都不一样",
+      "遇到陌生命令硬猜 option 含义还当事实——标注『不确定、查文档』才是正确动作",
+      "以为学第二种方言要从零开始——句法、路径、cwd 全部通用，只需补词汇"
+    ],
+    quiz: [
+      { q: "在 PowerShell 里输入 ls，实际执行的是什么？", options: [
+        { t: "Get-ChildItem（ls 只是执行前被替换的别名）", ok: true, why: "" },
+        { t: "Bash 的 ls 程序", ok: false, why: "这台电脑在跑的是 PowerShell，Bash 程序根本没被启动。借词 ≠ 换了语言。" },
+        { t: "CMD 的 dir", ok: false, why: "dir 是另一条别名，也指向 Get-ChildItem——但 ls 不等于 dir 的来源。" },
+        { t: "一个独立的 ls.exe", ok: false, why: "alias 是 shell 内部的替换表，不启动任何新程序名。" } ] },
+      { q: "看到提示符 MINGW64 ~/Desktop，你在哪？", options: [
+        { t: "Git Bash（Windows 程序，看到的是 Windows 文件）", ok: true, why: "" },
+        { t: "WSL Ubuntu", ok: false, why: "WSL 的提示符是 user@host:~$，没有 MINGW64。" },
+        { t: "PowerShell", ok: false, why: "PowerShell 有 PS 徽章。" },
+        { t: "一个真正的 Linux 系统", ok: false, why: "MINGW64 恰恰说明『这是 Windows 上的模拟』——真 Linux 不挂这个牌子。" } ] },
+      { q: "README 让你跑 rm -rf build，你在 PowerShell。最佳第一步是？", options: [
+        { t: "认出 Bash 方言，翻译成 Remove-Item -Recurse -Force build（或搜索确认等价写法）", ok: true, why: "" },
+        { t: "原样输入——rm 是别名，通用", ok: false, why: "rm 是别名没错，但 -rf 的解析两家不同，经常直接报错。不能赌。" },
+        { t: "把命令里的字母全换成大写", ok: false, why: "PowerShell 对大小写不敏感，这不是问题所在。" },
+        { t: "先重装 Git", ok: false, why: "和 Git 无关，是方言问题。" } ] },
+      { q: "tar -xvf project.tar.gz 中，哪项是『仅凭形式就能确定的事实』？", options: [
+        { t: "-xvf 是 option（- 开头，且是 -x -v -f 的连用体）", ok: true, why: "" },
+        { t: "x 代表 extract", ok: false, why: "合理推断（词根吻合），但含义必须查文档——这是『推断』不是『事实』。" },
+        { t: "tar 是压缩软件", ok: false, why: "tar 本身只管打包，压缩是 gzip 的事——语义推断，且这个推断还不准确。" },
+        { t: "v 代表 verbose", ok: false, why: "同样是合理推断而非形式事实。" } ] }
+    ]
+  }
+
 };
 
 const ROADMAP = [
   { mod: "A", name: "File System & Paths · 文件系统与路径", levels: [0,1,2], desc: "Level 0 操作对象 → Level 1 文件与文件夹 → Level 2 路径（绝对/相对/..）" },
   { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
-  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2","8.3","8.4"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）→ 8.3 Command Syntax（How is a sentence built?）→ 8.4 Command Line in Practice（Can I write one myself?）" },
+  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2","8.3","8.4","8.5"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）→ 8.3 Command Syntax（How is a sentence built?）→ 8.4 Command Line in Practice（Can I write one myself?）→ 8.5 Same Computer, Different Shells（Why do shells speak different dialects?）" },
   { mod: "D", name: "Git & GitHub", levels: [9,10,11,12,13,14,15], desc: "Level 9 Git mental model → 10 GitHub → 11 Repository → 12 clone/status/add/commit → 13 remote/push/pull（含 fetch vs pull 可视化）→ 14 分支与合并 → 15 阅读真实仓库 LaTeX-Workshop-2026" },
   { mod: "E", name: "Development Environment · 开发环境", levels: [16,17], desc: "Level 16 VS Code 与开发环境 → Level 17 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
   { mod: "F", name: "Network Basics · 网络基础", levels: [18,19], desc: "Level 18 IP / DNS / 网络连接 → Level 19 ping / ipconfig / nslookup / 代理" },
