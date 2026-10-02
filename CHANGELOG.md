@@ -1,5 +1,79 @@
 # Changelog · 变更记录
 
+## v1.7 · 2026-10-02 — Level 8.6 / 8.7：Bash 与 WSL 实操落地 + 终端跨关重置修复
+
+### Level 8.6 Git Bash（新关，32 Steps）
+
+- 回答的认知问题：**"Can I actually use another shell?"**
+- **训练量（按用户要求加大）**：32 个 Step、**23 个互动任务**（17 个 terminal 实操 + 3 fill + 3 predict）+ 复习页 4 道 quiz。
+- 内容主线：
+  - **引擎 bash 模式**：提示符变 MINGW64 样式（`YOGA@DESKTOP MINGW64 /c/...`）、路径接受 `/c/Users/...` 写法并自动翻译、错误显示 bash 口音（`bash: gitt: command not found`）、新增 `which` 命令；
+  - **「翻译两步走」题型**：先 fill 把 PowerShell 命令翻译成 Bash，再在同一步亲手输入同一条命令——8.5 的对照表在这里变成手写输入；
+  - 17 个实操任务覆盖：pwd / ls / mkdir / 故意打错看错误口音 / touch+rm / cd+touch+cp / mv 改名 / `ls *.txt` 通配符 / `ls n*` + 安全删除 / 带空格名字 / `/c/...` 绝对路径 / `cd ~` / which git / explorer . / code . / `rm -r` 清理；
+  - **毕业考：Bash 四拍建家链**（cd ~ → mkdir bashtest → cd bashtest → touch readme.txt → code .）。
+
+### Level 8.7 WSL（新关，28 Steps）
+
+- 回答的认知问题：**"What changes when the shell is running inside Linux?"**
+- **训练量**：28 个 Step、**18 个互动任务**（10 个 terminal 实操 + 4 predict + 3 multiselect + 1 matching + 1 fill）+ 复习页 4 道 quiz。
+- 内容主线：
+  - **引擎 wsl 模式**：独立 Linux 文件系统（家目录 `/home/yoga`，`~` 显示）、`/mnt/c` 与 Windows C 盘**双向桥接**（同一对象，两边可见）、PATH 不同（`which python3` → `/usr/bin/python3`）、apt 模拟（update / install）；
+  - **「两个世界的桥」主线**：从 Linux 世界看 Windows（`cd /mnt/c/Users/YOGA`）、从桥上回家（`cd ~`）、反向召唤 Windows GUI（`explorer.exe .`）、开发者跨世界日常（`code .`）；
+  - **辨析收口**：WSL ≠ Terminal ≠ Bash ≠ Ubuntu（8.0 五层模型收口）+ Git Bash vs WSL「方言相同、宿主不同」对照 multiselect；
+  - **毕业考：跨世界六拍链**（mkdir project → cd project → touch main.py → touch notes.md → code . → explorer.exe .）。
+
+### 终端引擎双模式（bash / wsl）
+
+- `createTermState(shell)`：缺省 `ps`；`bash` = 同一棵 Windows 树 + MINGW64 home；`wsl` = 独立 Linux FS（home/yoga + mnt/c 挂载 Windows C 盘 + /usr/bin）。
+- `displayPath`：ps → `C:\...`；bash → `/c/...`；wsl → `/...` 且 home 显示 `~`（pwd 输出、GUI 消息、拒绝消息统一走它）。
+- `resolvePath`：`~` 展开为 home；bash 模式 `/c/...` → `C:\...`；wsl/bash 前导 `/` 视为绝对路径（修掉 `/mnt/c/...` 被当相对路径的 bug）。
+- 新命令 `which`（bash 风格查 PATH）；`where` 仅限 PowerShell；`apt update/install` 仅 wsl 模式；未知命令按 shell 切换错误口音；`explorer.exe` 剥 `.exe` 后缀；cd 进 `C:\Windows` 的拒绝检查兼容 `/mnt/c/Windows`。
+- `resetTerminal` 按 `LEVELS[store.level].shell` 自动切换模式。
+
+### 真实 Bug 修复：终端跨关状态泄漏
+
+- **症状（E2E 八关连跑暴露）**：从上一关 Review 页「Start Next Level」进入新关时，终端不重置——上一关的 cwd 和 shell 模式会带进去。实例：8.2 毕业考留在 `mylab` 目录 → 8.4 热身 `cd Documents` 直接迷路；8.5 → 8.6 终端仍是 PowerShell 模式，Bash 关卡无法用 Bash 通关。
+- **修复**：`render()` 检测 `store.level` 变化时自动 `resetTerminal(true)`（`lastRenderedLevel` 追踪）。关内 Prev/Next 不触发重置，保留关内终端状态累积语义（8.4 / 8.6 / 8.7 依赖）。
+
+### 测试
+
+- Node 结构 + 引擎单测 **1191 断言全绿**（16 关结构、bash/wsl 引擎行为、8.6/8.7 毕业 validate 累计状态模拟、8.0–8.5 回归、ROADMAP 含 8.6/8.7、REVIEWS 五键齐全）。
+- 引擎级脚本模拟：44 个终端任务命令序列全部通过真实 validate 函数。
+- Edge 无头 E2E 自动通关 **Level 8.0–8.7 八关**（total=8、fails=0、八条 review reached）。
+
+## v1.6 · 2026-10-02 — Level 8.5：跨方言观察与翻译
+
+### Level 8.5 Same Computer, Different Shells（新关）
+
+- 回答的认知问题：**"Why do shells speak different dialects?"**
+- **本关契约：纯观察关卡，不要求会写 Bash**——训练目标是「读懂另一种 shell」的眼力，写 Bash 留到 8.6。
+- **训练量（按用户要求加大）**：36 个 Step、**23 个互动题**（predict 9 / multiselect 6 / matching 2 / fill 5 / ordering 1）+ 复习页 4 道 quiz，共 27 道检验题。
+- 内容主线：
+  - **Alias 机制**：ls / dir / gci → Get-ChildItem，cat / type → Get-Content——「PowerShell 的 ls 是借词不是 Bash」这一关键去魅；
+  - **核心对照表 + 8 连 matching**：Get-Location↔pwd、Get-ChildItem↔ls、Set-Location↔cd、Copy-Item↔cp、Move-Item↔mv、Remove-Item↔rm、Get-Content↔cat、New-Item↔touch（不对称点）；
+  - **提示符认环境**：PS / 裸路径>（CMD）/ MINGW64（Git Bash）/ user@host:~$（WSL），matching 4 连 + 实战题；~ 作为跨方言同源词；
+  - **两个世界**：Git Bash（Windows 程序，/c/Users 翻译腔）vs WSL（真 Linux，/home）——「方言相同，宿主不同」；
+  - **option 品味差异**（长名 vs 短名连用）+ CMD 第三方言速览（/s 斜杠选项）；「整条句子判断方言，不看单个单词」陷阱题；
+  - **三步翻译协议**（认 program → option 对号 → argument 照搬）作为本关毕业证书；
+  - **双向翻译演练 5 题**：cp / rm -r / mv / cat（高仿词陷阱）/ touch（不对称点）；
+  - **Unknown Command Challenge × 3**：grep -i "error" log.txt、python -m venv env（option 领养 argument 跨方言复刻）、tar -xvf（连用体拆解 + 事实/推断/不确定三分类）；
+  - **跨方言五步自问法**（8.3 五步升级版：插入第 ② 步「先认方言」）排序毕业考。
+- **REVIEWS["8.5"]** 五键齐全（concepts 8 / commands 8 / terms 8 / mistakes 6 / quiz 4）。
+
+### 8.6 / 8.7 正式设计入档（只设计，未实现）
+
+- ARCHITECTURE.md §10 落地 8.6 Git Bash（*Can I actually use another shell?*）与 8.7 WSL（*What changes when the shell is running inside Linux?*）的 learning objectives、concept map、prerequisite relationship、interaction design 与「不做清单」。
+- §11 新增 **Principle 2：先建 mental model，再增词汇**（Teach the mental model before increasing command vocabulary）——与 v1.5 的 Introduced ≠ Learned（Principle 1）并列。
+
+### 内容修订
+
+- 修正 8.5 五道翻译 fill 题的答案数组：答案只留「空格处」的合法填法（如 touch 题填 `new-item` 而非整条 `New-Item new.txt`），避免误导性备选。
+
+### 测试
+
+- Node 结构 + 引擎单测 **1006 断言全绿**（14 关结构、8.5 每步形状、引擎引号/通配符/git 回归、ROADMAP 含 8.5）。
+- Edge 无头 E2E 自动通关 **Level 8.0 / 8.1 / 8.2 / 8.3 / 8.4 / 8.5 六关**，全部到达 Review 页。
+
 ## v1.5 · 2026-09-27 — Level 8.3 / 8.4：从「教过」到「学会」
 
 ### 背景：试玩反馈驱动的路线重排

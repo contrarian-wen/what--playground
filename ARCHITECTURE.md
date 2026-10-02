@@ -92,23 +92,20 @@ Computer Fundamentals Playground
 - **Level 8.3 Command Syntax（28 Steps）**：已开放。回答 "How is a sentence built?"——句法渐进主线（pwd → cd Documents → ls -l → rm -r oldfolder → git commit -m "hello"）、option vs argument 双重判据、subcommand 工具箱直觉、pattern 不是法律、五步自问法、Unknown Command Challenge；毕业任务 git init → git commit -m。
 - **Level 8.4 Command Line in Practice（30 Steps）**：已开放。回答 "Can I write one myself?"——10 个 PowerShell 实操任务（导航 / 引号 / 通配符 / 安全删除 / GUI 召唤 / 毕业建家链），终端状态跨任务累积。
 - **Level 8.5 Same Computer, Different Shells（36 Steps）**：已开放。回答 "Why do shells speak different dialects?"——Alias 机制、PowerShell ↔ Bash 核心对照、提示符认环境、Git Bash vs WSL 两个世界、option 品味差异、CMD 第三方言、三步翻译协议、Unknown Command Challenge（grep / python -m / tar）跨方言五步自问法；23 个互动题 + 4 道复习 quiz，纯观察关卡不要求会写 Bash。
-- 虚拟终端引擎已支持 touch / cat / cp / mv / rm（-r）、引号参数、`*` `?` 通配符、git init / commit -m / status；ls 对选项给出提示分支。
+- **Level 8.6 Git Bash（32 Steps）**：已开放。回答 "Can I actually use another shell?"——引擎新增 bash 模式（MINGW64 提示符、/c/Users 路径翻译、bash 错误口音、which），17 个 terminal 实操 + 「翻译两步走」题型（先 fill 翻译、再亲手输入同一条命令），毕业考 Bash 四拍建家链；REVIEWS["8.6"] 五键齐全 + 4 道 quiz。
+- **Level 8.7 WSL（28 Steps）**：已开放。回答 "What changes when the shell is running inside Linux?"——引擎新增 wsl 模式（独立 Linux 文件系统，/home/yoga 家目录、/mnt/c 与 Windows C 盘双向桥接、apt 模拟），10 个 terminal 实操 + explorer.exe / code . 跨世界召唤、which python3、apt update/install，毕业考跨世界六拍链；REVIEWS["8.7"] 五键齐全 + 4 道 quiz。
+- **终端跨关重置修复（v1.7）**：render() 在 store.level 变化时自动 resetTerminal——此前从上一关 Review 页「Start Next Level」会携带旧 cwd / 旧 shell 模式进入新关（例：8.2 毕业考留在 mylab 会污染 8.4 热身；8.5→8.6 仍是 PowerShell 模式）。E2E 八关连跑暴露此真实用户路径 bug，已修。
+- 虚拟终端引擎已支持 touch / cat / cp / mv / rm（-r）、引号参数、`*` `?` 通配符、git init / commit -m / status；ls 对选项给出提示分支；bash / wsl 双模式（路径显示与解析翻译、which、apt、错误口音按 shell 切换）。
 
 ## 10. Future Roadmap
 
-- **Module C 续：8.6 → 8.7（Bash 分阶段引入策略，8.5 已落地）**：实操主线从 PowerShell 单线扩展为 PowerShell → Bash 双轨——目标是 Command Line fundamentals → PowerShell → Bash basics → Git Bash → WSL / Ubuntu / Bash。Bash **不作为独立门槛**出现，而是渐进对照引入。8.5 已完成「对照观察」阶段；8.6 / 8.7 的正式设计如下（只设计，未实现）：
-  - **8.6 Git Bash — *Can I actually use another shell?***
+- **Module C 续：8.6 → 8.7（Bash 分阶段引入策略）**：✅ 已实现（v1.7）。实操主线从 PowerShell 单线扩展为 PowerShell → Bash 双轨——目标是 Command Line fundamentals → PowerShell → Bash basics → Git Bash → WSL / Ubuntu / Bash。Bash **不作为独立门槛**出现，而是渐进对照引入。8.5 完成「对照观察」阶段，8.6 / 8.7 完成「亲手实操」阶段：
+  - **8.6 Git Bash — *Can I actually use another shell?***（已开放，32 Steps）
     - Learning objectives：① 在 VS Code / Windows Terminal 里亲手打开 Git Bash 标签页；② 用 Bash 完成 8.4 同款任务链（pwd / ls / cd / mkdir / touch / cp / mv / rm -r / 通配符），体验「mental model 全部通用、只换词汇」；③ 路径翻译实战（/c/Users/... 与 C:\Users\... 互换）；④ 理解 Git Bash 是 Windows 程序（MINGW64、能看到 C 盘、不能跑 apt）。
-    - Concept map：Terminal（容器，复用 8.0）→ Git Bash（Bash 方言的 Windows 宿主）→ Windows 文件系统（/c 翻译层）。与 8.5 对照表直接挂钩：8.5 连过 8 遍的字母表在这里变成手写输入。
-    - Prerequisite：8.4（PowerShell 实操）+ 8.5（对照表与翻译协议）。前置检查：能独立完成 8.4 毕业建家链、能口头说出 5 组 PowerShell↔Bash 对照。
-    - Interaction design：terminal 任务复用现有虚拟引擎（新增「bash 模式」开关：提示符变为 MINGW64 样式、mkdir/touch/cp/mv/rm 按 Bash 词汇解析、路径接受 /c/ 写法——引擎层小改，数据层不动）；题型以「翻译 → 输入」两步走（先 fill 翻译、再 terminal 实操同一条命令）。
-    - 不做：不教 apt / sudo / 权限系统 / 管道进阶——那些属于 8.7 的 Linux 世界。
-  - **8.7 WSL — *What changes when the shell is running inside Linux?***
-    - Learning objectives：① 理解 WSL = 完整 Linux 虚拟机（与 Git Bash 的本质区别，8.5 已埋伏笔）；② home 目录、/home vs /mnt/c 双向桥接；③ 最少 Linux 生存词汇（ls -la、apt、which、man --help 文化）；④ 最终辨析 WSL ≠ Terminal ≠ Bash ≠ VS Code（8.0 五层模型收口）。
-    - Concept map：Windows（宿主 OS）↔ WSL2（轻量虚拟机）→ Ubuntu（Guest OS）→ Bash（shell）→ Linux 文件系统（/home、/mnt/c 是 Windows 的挂载点）。
-    - Prerequisite：8.6 完成。前置检查：能在 Git Bash 里完成文件操作链、能解释 /c/Users 与 C:\Users 的翻译关系。
-    - Interaction design：以「两个世界的桥」为主线（explorer.exe . 在 WSL 里能召唤 Windows GUI、code . 能打开 VS Code——8.4 技能直接迁移）；terminal 引擎新增「wsl 模式」是可选增强，若工程量过大则以 clickmap / predict 模拟 WSL 窗口为主，terminal 实操留在 Git Bash 模式。
-    - 不做：不展开 systemd / 进程管理 / shell 脚本编程；不教包管理器细节（apt 只到「能装软件」一层）。这些属于 Module 04 Linux & WSL（ROADMAP H）的正式内容。
+    - Interaction design（落地版）：引擎 bash 模式 + 「翻译两步走」题型（fill 翻译 → terminal 输入同一条命令）+ 17 个实操任务 + 毕业四拍建家链。
+  - **8.7 WSL — *What changes when the shell is running inside Linux?***（已开放，28 Steps）
+    - Learning objectives：① 理解 WSL = 完整 Linux 虚拟机（与 Git Bash 的本质区别，8.5 已埋伏笔）；② home 目录、/home vs /mnt/c 双向桥接；③ 最少 Linux 生存词汇（apt、which、~ ）；④ 最终辨析 WSL ≠ Terminal ≠ Bash ≠ VS Code（8.0 五层模型收口）。
+    - Interaction design（落地版）：引擎 wsl 模式（独立 Linux FS、/mnt/c 与 C 盘双向可见）+ 「两个世界的桥」主线（explorer.exe . / code . 跨世界召唤）+ apt 模拟 + 毕业跨世界六拍链。
 - **Module D Git & GitHub（Levels 9–15）**：Git mental model → GitHub → repository → add/commit → remote/push/pull（含 fetch vs pull 可视化）→ 分支合并 → 阅读真实仓库。
 - **Module E Development Environment（16–17）**：VS Code → LaTeX 工具链（.tex → compiler → .pdf；MiKTeX / latexmk / Perl 各是什么）。LaTeX 不单独成 Module，作为「编译器 + 环境变量 + PATH」mental model 的练兵场；用户真实素材（`简历.tex`、`LaTeX-Workshop-2026.zip`）在虚拟文件系统中已埋伏笔，Module 05 回收。之后再教 LaTeX Basics 最小集（`\documentclass`、`\section`、公式、中文排版）。
 - **Module F–I**：网络基础 → Windows 系统工具 → WSL & Linux → 排查综合（command not found / permission denied / not a git repository 诊断训练）→ 最终挑战。
@@ -124,6 +121,8 @@ Computer Fundamentals Playground
   - Level 8.3 — *How is a sentence built?*（一句话怎么搭：句法拆解，五步自问法）
   - Level 8.4 — *Can I write one myself?*（我能不能自己写出一条命令：实操）
   - Level 8.5 — *Why do shells speak different dialects?*（为什么 shell 说不同方言：跨方言观察与翻译）
+  - Level 8.6 — *Can I actually use another shell?*（我能不能真的用另一个 shell：Git Bash 实操）
+  - Level 8.7 — *What changes when the shell is running inside Linux?*（shell 跑在 Linux 里时什么变了：WSL 与两个世界的桥）
   - 后续 Level 立项时先写下一句话问题，再排 Step。
 - **先建 mental model，再增词汇（v1.6 新增，Principle 2）**：Command Line 的 mental model（句法四件套、cwd、路径、引号、通配符）跨方言、跨 Level 保值；词汇（具体命令）才是会过时的表层。新增内容时优先扩展模型（新场景、新方言、新题型），而不是堆新命令清单；每种新词汇必须挂在已建立的模型结构上教（8.5 的翻译协议 = 8.3 句法模型 + 对照表词汇）。
 - **已介绍 ≠ 已学会（v1.5 新增）**：一个概念在某一关出现过，不代表用户已掌握——每个概念必须有**独立的检验环节**（反向组装、为什么题、陌生场景挑战）。试玩反馈优先于课程假设：如果反馈暴露出知识漏洞，先补漏洞（可以为补漏洞新增 Level / 调整编号），不硬按原计划推进。

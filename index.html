@@ -412,9 +412,28 @@ function createDefaultFS(){
   };
 }
 
-function createTermState(){
+function createTermState(shell){
+  shell = shell || "ps";
+  if(shell === "wsl"){
+    // WSL 模式：一个独立的 Linux 世界。mnt/c 桥接 Windows 的 C 盘（同一个对象，双向可见）
+    return {
+      shell: "wsl",
+      cwd: ["home", "yoga"],
+      home: ["home", "yoga"],
+      fs: {
+        "home": { "yoga": {} },
+        "mnt": { "c": createDefaultFS()["C:"] },
+        "usr": { "bin": { "python3": null, "bash": null, "grep": null } },
+        "etc": {}
+      },
+      // PATH 清单（Linux 写法）
+      path: ["/usr/bin", "/bin"]
+    };
+  }
   return {
+    shell: shell,   // "ps" | "bash"（Git Bash 模式：同一棵 Windows 树，/c/ 翻译腔写法）
     cwd: ["C:", "Users", "YOGA"],
+    home: ["C:", "Users", "YOGA"],
     fs: createDefaultFS(),
     // PATH 清单：shell 收到程序名时按顺序逐格搜索的文件夹（有序！）
     path: [
@@ -432,14 +451,42 @@ function pathStr(arr){ return arr.join("\\"); }
 
 function splitPath(arg){ return String(arg).split(/[\\/]+/).filter(Boolean); }
 
-// 把用户输入的路径（绝对或相对）解析成从盘符开始的段数组；无法解析返回 null
+// 按 shell 方言把内部路径（段数组）渲染成用户看到的写法
+function displayPath(state, arr){
+  const sh = state.shell || "ps";
+  if(sh === "ps") return pathStr(arr);
+  if(sh === "bash"){
+    // C:\Users\YOGA → /c/Users/YOGA
+    if(arr.length > 0 && /^[A-Za-z]:$/.test(arr[0]))
+      return "/" + arr[0].charAt(0).toLowerCase() + (arr.length > 1 ? "/" + arr.slice(1).join("/") : "");
+    return "/" + arr.join("/");
+  }
+  // wsl
+  const p = "/" + arr.join("/");
+  const home = "/" + (state.home || ["home", "yoga"]).join("/");
+  return p === home ? "~" : p;
+}
+
+// 把用户输入的路径（绝对或相对）解析成内部段数组；无法解析返回 null
+// 各模式预处理：~ = home（Bash/WSL）；Git Bash 的 /c/Users/... = C:\Users\...（翻译腔）
 function resolvePath(state, arg){
   if(typeof arg !== "string" || arg.trim() === "") return null;
-  const segs = splitPath(arg.trim());
+  const sh = state.shell || "ps";
+  const home = state.home || (sh === "wsl" ? ["home", "yoga"] : ["C:", "Users", "YOGA"]);
+  let str = arg.trim();
+  let absolute = false;
+  if(str === "~"){ str = pathStr(home); absolute = true; }
+  else if(str.charAt(0) === "~" && (str.charAt(1) === "/" || str.charAt(1) === "\\")){ str = pathStr(home) + str.slice(1); absolute = true; }
+  if(sh === "bash"){
+    const m = str.match(/^\/([a-zA-Z])(?:\/|$)/);
+    if(m){ str = m[1].toUpperCase() + ":" + str.slice(2); absolute = true; }
+  }
+  if((sh === "wsl" || sh === "bash") && (str.charAt(0) === "/" || str.charAt(0) === "\\")) absolute = true;
+  const segs = splitPath(str);
   if(segs.length === 0) return null;
   let base;
-  if(/^[a-zA-Z]:$/.test(segs[0])){
-    base = [];                       // 绝对路径：从盘符开始
+  if(/^[a-zA-Z]:$/.test(segs[0]) || absolute){
+    base = [];                       // 绝对路径：从盘符 / 根开始
   } else {
     base = state.cwd.slice();        // 相对路径：从当前目录开始
   }
@@ -488,9 +535,10 @@ function executeCommand(state, line){
     if(t.length >= 2 && ((t.charAt(0) === '"' && t.charAt(t.length - 1) === '"') || (t.charAt(0) === "'" && t.charAt(t.length - 1) === "'"))) return t.slice(1, -1);
     return t;
   });
-  result.cmd = tokens[0].toLowerCase();
+  result.cmd = tokens[0].toLowerCase().replace(/\.exe$/, "");   // explorer.exe → explorer（WSL 里常带后缀）
   result.args = tokens.slice(1);
   result.quoted = rawTokens.slice(1).map((t, i) => tokens[i + 1] !== t); // 每个参数是否曾被引号包住
+  const SH = state.shell || "ps";
   // PowerShell 原生名（Verb-Noun）映射到 Bash 风格实现：同一行为，不同名字（alias 概念）
   const PS_NATIVE = {
     "get-location":  { to: "pwd", note: "(Get-Location is PowerShell's native name; Bash calls the same behavior 'pwd')" },
@@ -502,7 +550,7 @@ function executeCommand(state, line){
   const cmd = result.cmd;
 
   if(cmd === "pwd"){
-    result.lines.push({ text: pathStr(state.cwd), cls: "t-ok" });
+    result.lines.push({ text: displayPath(state, state.cwd), cls: "t-ok" });
     if(nativeNote) result.lines.push({ text: nativeNote, cls: "t-dim" });
     return result;
   }
@@ -578,10 +626,11 @@ function executeCommand(state, line){
       result.lines.push({ text: "cd 只能进入文件夹，不能进入文件。", cls: "t-dim" });
       return result;
     }
-    if(r.length >= 2 && r[0] === "C:" && r[1] === "Windows"){
+    const winSegs = (r[0] === "mnt" && r[1] === "c") ? ["C:"].concat(r.slice(2)) : r;
+    if(winSegs.length >= 2 && winSegs[0] === "C:" && winSegs[1] === "Windows"){
       result.err = true;
-      result.lines.push({ text: `cd: 访问被拒绝 (Access denied / Permission denied): ${pathStr(r)}`, cls: "t-err" });
-      result.lines.push({ text: "（路径真实存在——是你的账户不被允许。Permission denied ≠ not found。需要 Administrator 权限，见 Module 06。）", cls: "t-dim" });
+      result.lines.push({ text: `cd: 访问被拒绝 (Access denied / Permission denied): ${displayPath(state, r)}`, cls: "t-err" });
+      result.lines.push({ text: "（路径真实存在——是你的账户不被允许。Permission denied ≠ not found。需要管理员权限。）", cls: "t-dim" });
       return result;
     }
     state.cwd = r;
@@ -797,8 +846,13 @@ function executeCommand(state, line){
     }
     if(node !== null && !recursive){
       result.err = true;
-      result.lines.push({ text: `rm: ${target}: 是一个文件夹，里面可能有重要东西。`, cls: "t-err" });
-      result.lines.push({ text: "rm 拒绝直接删文件夹——确认真的要删整个文件夹时，用 rm -r（recurse，递归）。这是 rm 内置的防手滑机制。", cls: "t-dim" });
+      if(SH === "ps"){
+        result.lines.push({ text: `rm: ${target}: 是一个文件夹，里面可能有重要东西。`, cls: "t-err" });
+        result.lines.push({ text: "rm 拒绝直接删文件夹——确认真的要删整个文件夹时，用 rm -r（recurse，递归）。这是 rm 内置的防手滑机制。", cls: "t-dim" });
+      } else {
+        result.lines.push({ text: `rm: cannot remove '${target}': Is a directory`, cls: "t-err" });
+        result.lines.push({ text: "（Bash 口音的拒绝：『这是个文件夹』。确认要删整个文件夹时，用 rm -r。）", cls: "t-dim" });
+      }
       return result;
     }
     const parent = getNode(state.fs, r.slice(0, -1));
@@ -808,7 +862,32 @@ function executeCommand(state, line){
     return result;
   }
 
-  if(cmd === "where"){
+  if(cmd === "which"){
+    // Bash/WSL 世界的 where：在 PATH 清单里找程序
+    const target = result.args[0];
+    if(!target){
+      result.err = true;
+      result.lines.push({ text: "which: 缺少目标。用法：which <程序名>", cls: "t-err" });
+      return result;
+    }
+    const exeName = target.toLowerCase().endsWith(".exe") ? target : target + ".exe";
+    let found = 0;
+    (state.path || []).forEach(d => {
+      const node = getNode(state.fs, splitPath(d));
+      if(typeof node === "object" && node !== null && (exeName in node || target in node)){
+        result.lines.push({ text: (SH === "wsl" ? d.replace(/\/$/, "") + "/" + (exeName in node ? exeName : target) : pathStr(splitPath(d).concat(exeName in node ? exeName : target))), cls: "t-ok" });
+        found++;
+      }
+    });
+    if(found === 0){
+      result.err = true;
+      result.lines.push({ text: `which: no ${target} in (${(state.path || []).join(":")})`, cls: "t-err" });
+      result.lines.push({ text: "（找遍 PATH 清单的每个文件夹，都没有它。程序存在于硬盘 ≠ shell 找得到 —— 它的文件夹在 PATH 里吗？）", cls: "t-dim" });
+    }
+    return result;
+  }
+
+  if(cmd === "where" && SH === "ps"){
     const target = result.args[0];
     if(!target){
       result.err = true;
@@ -871,6 +950,11 @@ function executeCommand(state, line){
   }
 
   if(cmd === "env"){
+    if(SH === "wsl"){
+      [["USER=yoga", "t-ok"], ["HOME=/home/yoga", "t-ok"], ["PATH=/usr/bin:/bin", "t-ok"], ["SHELL=/bin/bash", "t-ok"]].forEach(v => result.lines.push({ text: v[0], cls: v[1] }));
+      result.lines.push({ text: "(Linux 世界的环境变量——没有盘符、没有 USERPROFILE，home 在 /home。真实 Ubuntu 用 printenv 或 env 查看。)", cls: "t-dim" });
+      return result;
+    }
     const vars = [
       ["USERNAME=YOGA", "t-ok"],
       ["USERPROFILE=C:\\Users\\YOGA", "t-ok"],
@@ -881,6 +965,30 @@ function executeCommand(state, line){
     ];
     vars.forEach(v => result.lines.push({ text: v[0], cls: v[1] }));
     result.lines.push({ text: "(这是当前进程的环境变量副本——进程出生时 OS 发的便签。真实 PowerShell 里用 ls env: 或 Get-ChildItem Env: 查看。)", cls: "t-dim" });
+    return result;
+  }
+
+  // ===== apt（WSL 里的包管理器，概念级模拟）=====
+  if(cmd === "apt" && SH === "wsl"){
+    const sub = (result.args[0] || "").toLowerCase();
+    if(sub === "update"){
+      result.lines.push({ text: "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease", cls: "t-ok" });
+      result.lines.push({ text: "Reading package lists... Done", cls: "t-ok" });
+      result.lines.push({ text: "(apt update = 刷新软件商店货架清单。真实 Ubuntu 需要 sudo apt update——sudo 是『以管理员身份』，Module 04 详解。)", cls: "t-dim" });
+      return result;
+    }
+    if(sub === "install"){
+      const pkg = result.args[1];
+      if(!pkg){
+        result.err = true;
+        result.lines.push({ text: "apt install: 缺少包名。用法：apt install <包名>", cls: "t-err" });
+        return result;
+      }
+      result.lines.push({ text: "The following NEW packages will be installed: " + pkg, cls: "t-ok" });
+      result.lines.push({ text: "【模拟】" + pkg + " 已装好。（真实命令是 sudo apt install " + pkg + "——Linux 装软件不靠下载 .exe，靠包管理器从仓库自动取+装+配好 PATH。）", cls: "t-green" });
+      return result;
+    }
+    result.lines.push({ text: "apt: 最常用的两个动作：apt update（刷新清单）/ apt install <包名>（安装）。", cls: "t-ok" });
     return result;
   }
 
@@ -906,7 +1014,7 @@ function executeCommand(state, line){
       return result;
     }
     result.resolved = r.slice();
-    const full = pathStr(r);
+    const full = displayPath(state, r);
     if(cmd === "notepad"){
       if(node !== null){
         result.err = true;
@@ -920,7 +1028,8 @@ function executeCommand(state, line){
     }
     if(cmd === "code"){
       result.lines.push({ text: "【模拟 GUI】VS Code 窗口启动，打开了 " + full + (node !== null ? "\\" : ""), cls: "t-green" });
-      result.lines.push({ text: "(真实场景：code . 是开发者每天用的命令——在 VS Code 里打开当前文件夹)", cls: "t-dim" });
+      if(SH === "wsl") result.lines.push({ text: "(跨世界召唤：WSL 里的 code 命令通过 WSL 扩展桥接到 Windows 上的 VS Code——你在 Linux 世界发的令，Windows 的 GUI 听懂了)", cls: "t-dim" });
+      else result.lines.push({ text: "(真实场景：code . 是开发者每天用的命令——在 VS Code 里打开当前文件夹)", cls: "t-dim" });
       return result;
     }
     // start / explorer → File Explorer
@@ -930,14 +1039,15 @@ function executeCommand(state, line){
       result.lines.push({ text: "（想打开文件请用 notepad 或 start 文件名）", cls: "t-dim" });
       return result;
     }
-    result.lines.push({ text: "【模拟 GUI】一个文件资源管理器窗口弹出，停在 " + full + "\\", cls: "t-green" });
-    result.lines.push({ text: "(你在 GUI 里双击文件夹做的事，terminal 里一行命令也能做——操作的是同一棵树)", cls: "t-dim" });
+    result.lines.push({ text: "【模拟 GUI】一个文件资源管理器窗口弹出，停在 " + full + (SH === "wsl" ? "" : "\\"), cls: "t-green" });
+    if(SH === "wsl") result.lines.push({ text: "(真实场景：资源管理器会跳到 \\\\wsl$\\Ubuntu\\home\\yoga——Windows 也能走进 Linux 的家，桥是双向的)", cls: "t-dim" });
+    else result.lines.push({ text: "(你在 GUI 里双击文件夹做的事，terminal 里一行命令也能做——操作的是同一棵树)", cls: "t-dim" });
     return result;
   }
 
   if(cmd === "help"){
     result.lines.push({ text: "本模拟器支持的命令：", cls: "t-dim" });
-    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members (supports pattern like *.txt)", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder (quote names with spaces)", "touch <file>          - create an empty file", "cat <file>            - print a file's content", "cp <src> <dst>        - copy a file/folder", "mv <src> <dst>        - move / rename", "rm <file> / rm -r <dir>- delete (folder needs -r; supports *.txt)", "quotes: \"my folder\"   - one argument with spaces inside", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
+    ["pwd / Get-Location   - print current path", "ls / Get-ChildItem    - list members (supports pattern like *.txt)", "cd / Set-Location     - change directory", "mkdir <name>          - create a folder (quote names with spaces)", "touch <file>          - create an empty file", "cat <file>            - print a file's content", "cp <src> <dst>        - copy a file/folder", "mv <src> <dst>        - move / rename", "rm <file> / rm -r <dir>- delete (folder needs -r; supports *.txt)", "quotes: \"my folder\"   - one argument with spaces inside", "git --version         - run git, print its version", "where <name>          - search the PATH list for a program (PowerShell)", "which <name>          - the Bash/WSL way to search PATH", "apt update / install  - (WSL mode) Linux package manager, concept demo", "path                  - print the PATH list", "path-add <dir>        - add a folder to this window's PATH (practice command)", "env                   - show this process's environment variables", "echo <text>           - print text", "notepad <file>        - open a file in a GUI editor", "code [path]           - open a folder/file in VS Code (GUI)", "start / explorer [dir]- open a folder in File Explorer (GUI)", "clear                 - clear the screen"].forEach(t => result.lines.push({ text: t, cls: "t-ok" }));
     return result;
   }
 
@@ -949,7 +1059,7 @@ function executeCommand(state, line){
     for(const d of (state.path || [])){
       const segs = splitPath(d);
       const node = getNode(state.fs, segs);
-      if(typeof node === "object" && node !== null && exeName in node){ foundDir = segs; break; }
+      if(typeof node === "object" && node !== null && (exeName in node || cmd in node)){ foundDir = segs; break; }
     }
     if(foundDir){
       result.resolved = foundDir.concat(exeName);
@@ -974,10 +1084,15 @@ function executeCommand(state, line){
     }
   }
 
-  // 未知命令：模拟 command not found
+  // 未知命令：模拟 command not found（分方言口音）
   result.err = true;
-  result.lines.push({ text: `${cmd} : 无法将“${cmd}”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。`, cls: "t-err" });
-  result.lines.push({ text: `（意思是：电脑找不到叫“${cmd}”的程序。检查拼写，或先学习如何安装程序 —— 这是 Level 6 的内容）`, cls: "t-dim" });
+  if(SH === "ps"){
+    result.lines.push({ text: `${cmd} : 无法将“${cmd}”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。`, cls: "t-err" });
+    result.lines.push({ text: `（意思是：电脑找不到叫“${cmd}”的程序。检查拼写，或先学习如何安装程序 —— 这是 Level 6 的内容）`, cls: "t-dim" });
+  } else {
+    result.lines.push({ text: `bash: ${cmd}: command not found`, cls: "t-err" });
+    result.lines.push({ text: `（Bash 口音的『找不到程序』。which ${cmd} 可以查证；真要安装，Git Bash 世界装 Windows 程序、WSL 世界用 apt）`, cls: "t-dim" });
+  }
   return result;
 }
 // ==== DOM 部分开始 ====
@@ -5402,6 +5517,916 @@ const LEVELS = [
     }
   ]
 }
+,
+{
+  id: "8.6",
+  module: "02 · Command Line",
+  title: "Git Bash · 第一次说另一种方言",
+  en: "Git Bash: From Watching to Speaking",
+  shell: "bash",
+  summary: "观察期结束。在 Git Bash 模拟器里亲手输入 Bash 方言：pwd/ls/cd/mkdir/touch/cp/mv/rm -r、/c/ 路径翻译、which 查户口、explorer/code 召唤 GUI。核心体验：mental model 全部通用，只是换了词汇。",
+  steps: [
+    { type: "concept",
+      title: "开幕：从「看懂」到「开口」",
+      body: `
+        <p>8.5 你练了一整关的「读 Bash」。现在换个位置：<strong>键盘在你手里，请你亲口说 Bash 方言。</strong></p>
+        <p>先看提示符——它不再是 <span class="term-inline">PS C:\Users\YOGA&gt;</span>，而是 <span class="term-inline">YOGA@DESKTOP MINGW64 /c/Users/YOGA</span>。本关的模拟终端已切换成 <strong>Git Bash 模式</strong>：你说出的每条命令都按 Bash 方言解析。</p>
+        <p><strong>真实世界怎么打开它？</strong>VS Code 底部终端面板的 ⌄ 下拉菜单选 Git Bash；或 Windows Terminal 的 ＋ 号旁边 ⌄ 选 Git Bash；或直接双击桌面的 Git Bash 图标。</p>
+        <p>你已经备好的行李：句法四件套（8.3）、导航/引号/通配符（8.4）、对照表（8.5）。<strong>这一关注定比你想象的短——因为你要学的只是新词汇，模型全是旧的。</strong></p>`,
+      key: "<strong>本关契约：全部命令用 Bash 词汇输入。</strong>卡壳时先想 PowerShell 怎么做，再查 8.5 对照表翻译——翻译协议就是你的拐杖。"
+    },
+    { type: "terminal",
+      title: "第一句 Bash：pwd",
+      goal: `在 Git Bash 里输入 <code>pwd</code>，看看 Bash 怎么回答「我在哪」。`,
+      background: `8.4 你第一次输入 pwd 时，PowerShell 回答 C:\Users\YOGA。现在同一句话问 Git Bash——注意它的答案写法不一样。`,
+      hints: [
+        "就是三个字母：pwd",
+        "回车后仔细看输出的路径写法——斜杠方向和你熟悉的相反",
+        "Answer: pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && r.lines[0] && r.lines[0].text.indexOf("/c/Users/YOGA") !== -1 && s.shell === "bash",
+      success: "Bash 回答 /c/Users/YOGA——盘符翻译腔（8.5 学过的 /c 规则）现在成了你的地址栏。",
+      internals: "Git Bash 是一个 Windows 程序（MINGW64），但它装了一张『Linux 口音声带』。pwd 看到的还是同一棵 Windows 文件树，只是显示时把 C: 翻译成 /c、把 \\ 翻译成 /。",
+      breakdown: [
+        { token: "pwd", label: "command 命令", text: "Bash 的原生命令（不是别名！这点马上考你）。" }
+      ]
+    },
+    { type: "concept",
+      title: "Mental model 免检：什么都没换，只是换了词",
+      body: `
+        <p>做个清点，你会发现一个惊人的事实：</p>
+        <table class="cmp-table">
+          <tr><th>层</th><th>状态</th></tr>
+          <tr><td>句法四件套（program/subcommand/option/argument）</td><td>✅ 原样通用</td></tr>
+          <tr><td>当前目录 cwd、pwd 问它、cd 改它</td><td>✅ 原样通用</td></tr>
+          <tr><td>相对/绝对路径、. 与 ..</td><td>✅ 原样通用</td></tr>
+          <tr><td>引号粘词、* 通配符展开</td><td>✅ 原样通用（shell 的行为，不是程序的）</td></tr>
+          <tr><td>程序名 + 参数 → shell 查 PATH → 启动进程</td><td>✅ 原样通用</td></tr>
+          <tr><td>具体命令的词汇</td><td>🔄 换了一套（对照表）</td></tr>
+        </table>
+        <p><strong>这就是为什么先学 mental model 再增词汇</strong>（Principle 2）：你 8.3 / 8.4 的每一份训练，在 Git Bash 里自动保值。接下来全是「旧操作、新词形」。</p>`,
+      key: "<strong>换 shell ≠ 从头学。换的是词汇表，不是世界观。</strong>"
+    },
+    { type: "terminal",
+      title: "旧操作新词形 ①：ls 看家门",
+      goal: `输入 <code>ls</code>，列出当前文件夹（你的家）的成员。`,
+      background: `8.4 的第一课在 PowerShell 里做，现在原题重考——只是口音变了。`,
+      hints: [
+        "PowerShell 里你打什么，这里就打什么（这个词两家碰巧一样）",
+        "两个字母",
+        "Answer: ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && r.lines.some(l => l.text.indexOf("Documents") !== -1),
+      success: "Documents、Desktop、Downloads…… 一模一样的家。ls 这个词在两家都认——8.5 说过它是『碰巧同名』的高仿词，现在你在原主人家里用它了。",
+      internals: "Bash 的 ls 是真命令（不像 PowerShell 的 ls 是 Get-ChildItem 的别名马甲）。它列出 cwd 的成员——机制与你已知的毫无区别。",
+      breakdown: [
+        { token: "ls", label: "command 命令", text: "list——Bash 的正式成员，不是小名。" }
+      ]
+    },
+    { type: "predict",
+      title: "真假 pwd 辨身份",
+      scenario: `同一个 pwd：<br>在 PowerShell 里，它是 <span class="term-inline">Get-Location</span> 的 alias（马甲）；<br>在 Bash 里，pwd 是什么身份？`,
+      options: [
+        { t: "Bash 的原生命令（真身，不是任何人的马甲）", ok: true, why: "pwd 是 Unix 世界的原住民，Bash 里打 pwd 就是在跑 pwd 本身。" },
+        { t: "Get-Location 的别名", ok: false, why: "Get-Location 是 PowerShell 的正式名——Bash 根本不认得这个词。" },
+        { t: "cd 的别名", ok: false, why: "pwd 是『问位置』，cd 是『改位置』，两个动作。" },
+        { t: "一个 .exe 程序，碰巧叫 pwd", ok: false, why: "Bash 里 pwd 是 shell 内建命令（builtin），连磁盘都不用碰。" }
+      ],
+      explain: `同一个词、两种身份：PowerShell 的 pwd 是<strong>借来穿的马甲</strong>，Bash 的 pwd 是<strong>本名</strong>。这正是 8.5 警告过的「高仿词」——迁移到新方言时，词的身份可能已经变了，但行为对齐。`,
+      hints: [
+        "问自己：Bash 里有没有一个叫 Get-Location 的命令？",
+        "pwd 三个字母本身就是一句话（print working directory 的缩写）",
+        "Answer: Bash 的原生命令"
+      ]
+    },
+    { type: "terminal",
+      title: "旧操作新词形 ②：mkdir 建练习场",
+      goal: `建一个名为 <code>bashlab</code> 的文件夹，并用 <code>ls</code> 确认它出现。`,
+      background: `和 8.4「练习场」任务同款，词汇居然也一样——mkdir 是两家通用的同源词。`,
+      hints: [
+        "mkdir 后面跟名字",
+        "建完 ls 一下，看到 bashlab\\ 就是成了",
+        "Answer: mkdir bashlab → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mkdir" && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab"]) !== undefined,
+      success: "bashlab 建好了。注意成功提示的路径写法——模拟器也用 /c 翻译腔显示，帮你把新写法看熟。",
+      internals: "mkdir 在两家通用不是巧合：它太基础了，大家都保留了最原始的写法。越是基础的词，跨方言越稳定——这也是 8.5「同源词」一题的活例证。",
+      breakdown: [
+        { token: "mkdir", label: "command 命令", text: "make directory，两家通用。" },
+        { token: "bashlab", label: "argument 参数", text: "新文件夹的名字。" }
+      ]
+    },
+    { type: "concept",
+      title: "听错报的口音：command not found",
+      body: `
+        <p>8.3 你学过：读错误信息是命令行的核心技能。现在同一个错误换方言说一遍：</p>
+        <table class="cmp-table">
+          <tr><th>方言</th><th>打错 gittt 后的报错</th></tr>
+          <tr><td>PowerShell</td><td><code>gittt : 无法将“gittt”项识别为 cmdlet……</code>（一整段公文）</td></tr>
+          <tr><td>Bash</td><td><code>bash: gittt: command not found</code>（一句话）</td></tr>
+        </table>
+        <p>信息不同，<strong>含义完全相同</strong>：shell 找遍了 PATH 清单，没有叫 gittt 的程序。Bash 的报错文化就是「惜字如金」——三个词说完全部内容，剩下的让你自己查。</p>
+        <p>还有一个小口音差异值得收藏：Bash 拒绝删文件夹时说 <span class="term-inline">rm: cannot remove 'x': Is a directory</span>——比 PowerShell 的劝说式拒绝冷淡得多。</p>`,
+      key: "错误信息也有方言。<strong>内容比对措辞重要</strong>——command not found = 程序不在 PATH。"
+    },
+    { type: "terminal",
+      title: "体验错误口音：故意打错",
+      goal: `先输入 <code>gitt</code>（故意打错的 git），亲眼看 Bash 怎么报错；然后再输入 <code>ls</code> 确认一切照常。`,
+      background: `错误不是事故，是教材。注意 Bash 报错有多短——然后问自己：如果这是 Stack Overflow 上别人贴的报错，你认得出它来自哪种 shell 吗？（8.5 练过）`,
+      hints: [
+        "第一行：gitt（少打一个 t 的 git）",
+        "报错看完后，第二行输入 ls",
+        "Answer: gitt → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls",
+      success: "打错不会弄坏任何东西——shell 只是耸耸肩说 not found，等你下一条命令。这是命令行新手最需要的安全感。",
+      internals: "错误发生在链条的『查 PATH』一环（8.1 的事件链）：shell 拆词 → 找 gitt.exe → 找不到 → 报错。程序根本没被启动，所以世界安然无恙。",
+      breakdown: [
+        { token: "gitt", label: "program（不存在的）", text: "shell 查遍 PATH：查无此程序 → command not found。" },
+        { token: "ls", label: "command 命令", text: "下一条命令照常执行——错误不会传染。" }
+      ]
+    },
+    { type: "fill",
+      title: "翻译两步走 · 第一步：先在脑子里翻",
+      scenario: `任务卡（8.4 同款旧题）：删除文件 old.txt。你的 PowerShell 肌肉记忆会打出：<br><span class="term-inline">Remove-Item old.txt</span><br>但在 Git Bash 里，空格处该填什么？<br><span class="term-inline">______ old.txt</span>`,
+      before: ``,
+      after: ` old.txt`,
+      answer: ["rm", "rm old.txt"],
+      explain: `空格填 <span class="term-inline">rm</span>。这就是 8.5 翻译协议的第 ① 步（认 program）：Remove-Item 词根 remove → Bash 短名 rm。<strong>下一题请你亲手把 rm old.txt 输进终端</strong>——先翻再说，是降低开口门槛的过渡姿势。`,
+      hints: [
+        "对照表：Remove-Item ↔ ?",
+        "r 开头，两个字母",
+        "Answer: rm old.txt"
+      ],
+      key: "翻译两步走：<strong>先在 fill 里翻出来，再在 terminal 里打出去。</strong>"
+    },
+    { type: "terminal",
+      title: "翻译两步走 · 第二步：亲手输入",
+      goal: `先 <code>touch old.txt</code> 建出目标文件，再亲手输入 <code>rm old.txt</code> 删掉它。`,
+      background: `刚才你在脑子里完成了翻译（Remove-Item → rm），现在轮到手指。注意 touch 这个词——它在 8.5 的对照表里是不对称点（PowerShell 里你得打 New-Item），但在 Bash 里 touch 就是本名。`,
+      hints: [
+        "第一行 touch old.txt",
+        "第二行 rm old.txt（不是 Remove-Item！）",
+        "Answer: touch old.txt → rm old.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "rm" && getNode(s.fs, ["C:", "Users", "YOGA", "old.txt"]) === undefined,
+      success: "删除成功。你发现了吗——touch 在 Bash 里是名正言顺的原生命令，8.5 那个『PowerShell 没有 touch』的不对称，在 Bash 世界根本不存在。",
+      internals: "touch 和 rm 都是 Unix 世界的原住民命令，Git Bash 把它们原样搬进了 Windows。执行的还是同一棵虚拟文件树——变的只有词汇。",
+      breakdown: [
+        { token: "touch old.txt", label: "command + argument", text: "Bash 原生的「建空文件」。" },
+        { token: "rm old.txt", label: "command + argument", text: "Remove-Item 的 Bash 说法。" }
+      ]
+    },
+    { type: "terminal",
+      title: "进屋干活：cd + touch + cp",
+      goal: `进入 bashlab，建 <code>notes.txt</code>，然后复制一份 <code>notes-backup.txt</code>。`,
+      background: `三条命令的小任务链：进屋 → 放东西 → 复制。每条你都在 PowerShell 里做过同款，现在换 Bash 词汇走一遍。`,
+      hints: [
+        "第一行：cd bashlab",
+        "第二行：touch notes.txt",
+        "Answer: cd bashlab → touch notes.txt → cp notes.txt notes-backup.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "cp" && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "notes-backup.txt"]) === null,
+      success: "cp 复制成功——Copy-Item 的短名马甲在本尊面前出现了。注意你全程没离开 Windows 文件系统，只是换了说话方式。",
+      internals: "cp 收到两个 argument：来源和目标。Bash 的 cp 和 PowerShell 的 Copy-Item 语义完全对齐（复制 = 制造第二份，原件不动）——对照表里词根相同的词，翻译起来零风险。",
+      breakdown: [
+        { token: "cd bashlab", label: "command + argument", text: "进屋。" },
+        { token: "touch notes.txt", label: "command + argument", text: "在屋内建文件（cwd 决定建在哪）。" },
+        { token: "cp notes.txt notes-backup.txt", label: "command + arg + arg", text: "复制：源 → 目标，两个 argument 各就各位。" }
+      ]
+    },
+    { type: "terminal",
+      title: "改名：mv 的本职工作",
+      goal: `把 bashlab 里的 <code>draft.txt</code> 改名为 <code>final.txt</code>。`,
+      background: `mv 在 Bash 里一人兼两职：移动文件夹之间的文件、和原地改名。这次用它的改名职能。`,
+      hints: [
+        "先 touch draft.txt 造出它",
+        "mv 旧名字 新名字",
+        "Answer: touch draft.txt → mv draft.txt final.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mv" && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "final.txt"]) === null && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "draft.txt"]) === undefined,
+      success: "改名成功——draft.txt 消失了，final.txt 出现。mv 的移动和改名是同一件事的两个侧面：改的都是『文件挂在树里的位置』。",
+      internals: "改名 = 在同一个文件夹里『移动』到另一个名字下。文件内容一个字节没动，动的只有目录里那行登记（8.1 的文件系统模型）。",
+      breakdown: [
+        { token: "mv", label: "command 命令", text: "move——移动兼改名。" },
+        { token: "draft.txt final.txt", label: "argument ×2", text: "从哪来 → 改成什么。" }
+      ]
+    },
+    { type: "fill",
+      title: "反向翻译：Copy-Item 的 Bash 说法",
+      scenario: `同事只看得懂 Bash。把这条 PowerShell 命令翻译成 Bash：<br><span class="term-inline">Copy-Item a.txt b.txt</span><br>空格处该填：<br><span class="term-inline">______ a.txt b.txt</span>`,
+      before: ``,
+      after: ` a.txt b.txt`,
+      answer: ["cp"],
+      explain: `填 <span class="term-inline">cp</span>。到现在你已经把这个对照正反各用了两遍——<strong>重复使用是记住词汇的唯一 honest 方式</strong>，这也回答了 8.5「要不要背对照表」：不用背，用四次就自然记住。`,
+      hints: [
+        "词根 copy → Bash 短名？",
+        "两个字母",
+        "Answer: cp a.txt b.txt"
+      ]
+    },
+    { type: "concept",
+      title: "通配符：shell 的跨方言本能",
+      body: `
+        <p>8.4 你学过：<span class="term-inline">ls *.txt</span> 里的 <span class="term-inline">*</span> 不是 ls 的功能，而是 <strong>shell 先把 *.txt 展开成一批文件名</strong>，再交给 ls。这是 shell 层的预处理——和程序说哪种方言无关。</p>
+        <p>所以在 Git Bash 里：<strong>*.txt 的用法、语法、风险（先 ls 预览再 rm）全部原样带过来</strong>。唯一的变化是删文件时你打 rm 而不是 Remove-Item。</p>
+        <p>这是 mental model 保值的又一证明：<strong>越是底层的机制（shell 展开、PATH 查找、进程启动），跨方言越稳定。</strong></p>`,
+      key: "通配符、引号、PATH、进程——shell 层机制跨方言 100% 通用；只有词汇在变。"
+    },
+    { type: "terminal",
+      title: "旧操作新词形 ③：通配符圈选",
+      goal: `在 bashlab 里输入 <code>ls *.txt</code>，看看通配符圈中了哪些文件。`,
+      background: `bashlab 里现在躺着三个 .txt：notes.txt、notes-backup.txt、final.txt。用 *.txt 一次圈出它们。`,
+      hints: [
+        "ls 后面跟一个模式",
+        "星号点 txt",
+        "Answer: ls *.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && r.lines.some(l => l.text.indexOf("通配符") !== -1),
+      success: "三个文件一次圈中。展开、匹配、显示——每个环节都和 PowerShell 里那次一模一样，只是口音换了。",
+      internals: "Git Bash 收到 ls *.txt：先展开成 ls notes.txt notes-backup.txt final.txt，再执行。*.txt 从头到尾没到过 ls 手里——这是 shell 的职责分工。",
+      breakdown: [
+        { token: "ls", label: "command 命令", text: "列出来。" },
+        { token: "*.txt", label: "pattern 模式", text: "shell 先展开成文件名列表——Bash 展开规则和 PowerShell 一致。" }
+      ]
+    },
+    { type: "terminal",
+      title: "安全删除（Bash 口音版）",
+      goal: `用「先预览再删除」的铁律删掉 <code>notes-backup.txt</code>：先 <code>ls n*</code> 预览，再 <code>rm notes-backup.txt</code> 删除。`,
+      background: `8.4 的铁律换个方言重申一遍：rm + 模式之前，先 ls 同一个模式。备份文件已完成使命，删掉它。`,
+      hints: [
+        "第一行：ls n*（预览会命中谁？）",
+        "第二行：rm notes-backup.txt",
+        "Answer: ls n* → rm notes-backup.txt"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "rm" && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "notes-backup.txt"]) === undefined,
+      success: "铁律执行完毕：预览 → 确认 → 删除。这套流程不是 PowerShell 专属，是 shell 世界的通用安全文化。",
+      internals: "rm 是 Unix 世界的删除命令，它同样默认不问你第二遍（删了就是删了）。所以『先 ls 预览』的铁律在 Bash 里不是建议，是生存技能。",
+      breakdown: [
+        { token: "ls n*", label: "command + pattern", text: "预览：n 开头的都会列出。" },
+        { token: "rm notes-backup.txt", label: "command + argument", text: "确认后执行删除。" }
+      ]
+    },
+    { type: "concept",
+      title: "引号：另一个跨方言同源机制",
+      body: `
+        <p>8.4 的静默错误还记得吗：<span class="term-inline">mkdir my folder</span>（无引号）会建出叫 my 的文件夹，且不报错。这个陷阱在 Bash 里<strong>一字不差地存在</strong>——因为引号粘词是 shell 层的预处理，两种方言的规则相同：</p>
+        <p><strong>空格是参数的分界线，引号把空格「粘」在一个词里。</strong></p>
+        <p>好消息是你不用学新东西；坏消息是陷阱也原样跟过来了。下一题亲手验证一次。</p>`,
+      key: "引号规则跨方言通用：<strong>陷阱也跟着通用</strong>——my folder 无引号，两家都会只建出 my。"
+    },
+    { type: "terminal",
+      title: "旧操作新词形 ④：带空格的名字",
+      goal: `在 bashlab 里建一个名叫 <code>my folder</code>（带空格）的文件夹，并确认只建出一个、名字完全正确。`,
+      background: `8.4 的「引号粘词」任务 Bash 重考版。这次轮到你主动想起引号——Hint 会逐级提醒你，但先自己试。`,
+      hints: [
+        "空格会切断参数——怎么让「my folder」算一个词？",
+        "8.4 的关键词：引号",
+        "Answer: mkdir \"my folder\""
+      ],
+      validate: (r, s) => !r.err && r.cmd === "mkdir" && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "my folder"]) !== undefined && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "my"]) === undefined,
+      success: "一个文件夹、名字带空格、没有多余的 my——引号在 Bash 里同样靠谱。",
+      internals: "Git Bash 分词时看到成对引号，把 my folder 粘成一个 token 交给 mkdir。机制与 PowerShell 完全相同——shell 层规则，不随方言改变。",
+      breakdown: [
+        { token: "mkdir", label: "command 命令", text: "建文件夹。" },
+        { token: "\"my folder\"", label: "argument（带引号）", text: "引号内的空格不切词——一个完整的名字。" }
+      ]
+    },
+    { type: "fill",
+      title: "路径翻译实战：/c/ 翻译腔",
+      scenario: `你要用<strong>绝对路径</strong>从 Git Bash 直达 Documents。这个地址的 Git Bash 写法是：<br><span class="term-inline">cd ______</span>`,
+      before: `cd `,
+      after: ``,
+      answer: ["/c/Users/YOGA/Documents", "C:\\Users\\YOGA\\Documents", "C:/Users/YOGA/Documents"],
+      explain: `标准答案是 <span class="term-inline">/c/Users/YOGA/Documents</span>——8.5 的两条翻译规则（C: → /c、\\ → /）现在由你亲手使用。其实 C:\\ 写法 Git Bash 也认，但 /c/ 才是它的母语——用母语，读报错时也更容易对上号。`,
+      hints: [
+        "规则①：盘符 C: 变成什么开头？",
+        "规则②：\\ 换成 /",
+        "Answer: /c/Users/YOGA/Documents"
+      ],
+      key: "翻译规则现在是<strong>输出技能</strong>：C:\\Users\\YOGA → /c/Users/YOGA。"
+    },
+    { type: "terminal",
+      title: "绝对路径导航（Bash 写法）",
+      goal: `输入 <code>cd /c/Users/YOGA/Documents</code> 直达 Documents，再 <code>pwd</code> 确认位置。`,
+      background: `刚才你在 fill 里翻出了 /c/ 写法，现在亲手把它打进终端。这是 8.4「绝对路径导航」的 Bash 重考版。`,
+      hints: [
+        "cd 后面跟上题翻出来的地址",
+        "然后 pwd 检查答案",
+        "Answer: cd /c/Users/YOGA/Documents → pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA\\Documents",
+      success: "pwd 回答 /c/Users/YOGA/Documents——翻译腔地址导航成功。内部状态其实存的还是 C:\\Users\\YOGA\\Documents，显示时才翻译——你可以把 /c 理解成 Bash 的『显示滤镜』。",
+      internals: "Git Bash 收到 /c/Users/YOGA/Documents，翻译回 C:\\Users\\YOGA\\Documents 再操作。翻译层在 shell 内部，程序收到的永远是标准 Windows 路径。",
+      breakdown: [
+        { token: "cd", label: "command 命令", text: "改变当前目录。" },
+        { token: "/c/Users/YOGA/Documents", label: "argument（Bash 写法）", text: "shell 翻译成 C:\\Users\\YOGA\\Documents 后使用。" }
+      ]
+    },
+    { type: "terminal",
+      title: "~ 回家",
+      goal: `输入 <code>cd ~</code> 直接回家，再 <code>pwd</code> 确认。`,
+      background: `8.5 提过 ~ 是「我家」的速记，两种方言都认。在 Git Bash 里，~ 被翻译成 /c/Users/YOGA（你的 Windows 家目录）。`,
+      hints: [
+        "波浪号",
+        "cd 加波浪号，再 pwd",
+        "Answer: cd ~ → pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("\\") === "C:\\Users\\YOGA",
+      success: "回到 /c/Users/YOGA。~ 是跨方言的同源符号——在 PowerShell 它指 C:\\Users\\YOGA，在 Git Bash 指 /c/Users/YOGA，在 WSL 会指 /home/yoga（下一关）。同一个字，三个世界。",
+      internals: "shell 展开：~ → $HOME 环境变量的值 → 本模拟器里即 C:\\Users\\YOGA。展开发生在程序运行之前——程序看到的从来不是 ~ 这个字。",
+      breakdown: [
+        { token: "cd ~", label: "command + 速记", text: "~ = home 目录的缩写，shell 展开后使用。" }
+      ]
+    },
+    { type: "concept",
+      title: "which：Bash 世界的查户口",
+      body: `
+        <p>8.5 说过 PowerShell 用 <span class="term-inline">where</span> 查程序住在 PATH 的哪一格；Bash 世界的同一个动作叫 <span class="term-inline">which</span>：</p>
+        <table class="cmp-table">
+          <tr><th>意图</th><th>PowerShell</th><th>Bash</th></tr>
+          <tr><td>程序在 PATH 哪里？</td><td><code>where git</code></td><td><code>which git</code></td></tr>
+          <tr><td>查无此人时</td><td><code>INFO: Could not find files...</code></td><td><code>which: no git in (/usr/bin:...)</code></td></tr>
+        </table>
+        <p>动作模型你早已掌握（PATH 逐格搜索，Level 6）：<strong>which 只是同一个模型的 Bash 按钮</strong>。</p>`,
+      key: "where ↔ which：同一动作的两个方言按钮。"
+    },
+    { type: "terminal",
+      title: "查户口：which git",
+      goal: `输入 <code>which git</code>，找出 git 程序住在 PATH 的哪一格。`,
+      background: `Git Bash 里天然该有 git——它名字里就带着 Git。用 which 把它的住址查出来。`,
+      hints: [
+        "which 加程序名",
+        "程序名就是 git",
+        "Answer: which git"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "which",
+      success: "找到 git.exe——住在 C:\\Program Files\\Git\\cmd。这是 Git for Windows 安装时自动报的户口，PATH 机制在两种方言里完全同构。",
+      internals: "which 和 where 做的事一模一样：从 PATH 清单第一格开始逐格找 git.exe，找到就报住址。差别只在输出排版——Bash 版更短。",
+      breakdown: [
+        { token: "which", label: "command 命令", text: "Bash 的 PATH 查找器。" },
+        { token: "git", label: "argument 参数", text: "要查户口的程序名。" }
+      ]
+    },
+    { type: "predict",
+      title: "which 实战推理",
+      scenario: `你在 Git Bash 里输入 <code>which python</code>，得到：<br><span class="term-inline">which: no python in (/usr/local/bin:/usr/bin:/bin)</span><br>（本模拟器的 Git Bash PATH 与 PowerShell 共享。）<strong>这个输出说明什么？</strong>`,
+      options: [
+        { t: "python 存在，但它的文件夹不在这份 PATH 清单里——和 PowerShell 里 where 失败的诊断完全相同", ok: true, why: "Level 6 的模型直接复用：程序存在于硬盘 ≠ shell 找得到；找不到 = 不在 PATH。" },
+        { t: "Git Bash 不能运行 Python", ok: false, why: "PATH 查不到 ≠ 不能运行。给出完整路径照样能跑。" },
+        { t: "python 在 PowerShell 的 PATH 里，但在 Git Bash 里没有", ok: false, why: "注意题目：本模拟器两者共享 PATH——而 Git Bash 的 PATH 清单里确实没有 Python 文件夹，所以两边都查不到。" },
+        { t: "which 命令打错了", ok: false, why: "拼写正确——which 正常工作并如实报告了『找不到』。" }
+      ],
+      explain: `诊断逻辑和 PowerShell 时代一模一样：<strong>先怀疑 PATH，再怀疑拼写，最后才怀疑程序没装</strong>。方言换了，诊断协议不换——这是 mental model 保值的终极形态。`,
+      hints: [
+        "回想 Level 6：where 找不到 ≠ 程序不存在",
+        "答案就藏在『in (清单)』这三个字里",
+        "Answer: 它的文件夹不在这份 PATH 里"
+      ]
+    },
+    { type: "concept",
+      title: "GUI 召唤不分方言（和 .exe 文化）",
+      body: `
+        <p>8.4 你学过 <span class="term-inline">explorer .</span> 和 <span class="term-inline">code .</span>——在终端里召唤 GUI 程序。<strong>这在 Git Bash 里原样可用</strong>，因为 explorer 和 code 是程序，不是 shell 的内置命令；程序不在乎你在哪个 shell 里叫它。</p>
+        <p>有一个小文化差异：Linux 世界习惯带扩展名全名，所以你会常看到 <span class="term-inline">explorer.exe .</span> 这种写法—— Git Bash 两种都认。</p>
+        <p>这也回答了 8.5 的一个悬念：『程序 + argument』层是跨方言的——<strong>GUI 程序就是这一层的活例证</strong>。</p>`,
+      key: "shell 内置命令随方言变（where/which）；<strong>外部程序召唤跨方言通用</strong>（explorer/code）。"
+    },
+    { type: "terminal",
+      title: "召唤 GUI（Bash 版）",
+      goal: `先回 bashlab（<code>cd bashlab</code>），再输入 <code>explorer .</code> 从 Git Bash 召唤资源管理器。`,
+      background: `你在 Bash 世界里发的令，Windows 的 GUI 照听不误——程序是 OS 的孩子，不是 shell 的孩子。`,
+      hints: [
+        "第一行回屋：cd bashlab",
+        "第二行召唤：explorer 空格点",
+        "Answer: cd bashlab → explorer ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "explorer",
+      success: "资源管理器弹开，停在 bashlab。注意这次的成就感来源变了：8.4 是『我会召唤 GUI』，这次是『我在另一种语言里召唤 GUI』——迁移成功的感觉。",
+      internals: "Git Bash 找到 explorer.exe → 请求 OS 启动它 → 把 . 展开成的路径作为参数传过去。整条链和 PowerShell 那次逐环相同，shell 只负责『找人带路』。",
+      breakdown: [
+        { token: "explorer", label: "program 程序（GUI 型）", text: "Windows 程序——哪个 shell 叫它都行。" },
+        { token: ".", label: "argument 参数", text: "当前文件夹。" }
+      ]
+    },
+    { type: "terminal",
+      title: "召唤 VS Code（Bash 版）",
+      goal: `输入 <code>code .</code>，在 VS Code 里打开当前文件夹（bashlab）。`,
+      background: `开发者的日常命令，换个方言依然成立。这是你今天在 Git Bash 里的最后一次 GUI 召唤。`,
+      hints: [
+        "code 空格点",
+        "对，就是这一条，没有新词",
+        "Answer: code ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "code",
+      success: "VS Code 打开 bashlab。到这里，你在 Bash 方言里完成了导航、文件操作、通配符、引号、查户口、GUI 召唤——8.4 的技能清单全部迁移完毕。",
+      internals: "code 命令是 VS Code 安装时注册的带路人（它把参数转交给真正的 Code.exe）。Bash 启动它和 PowerShell 启动它，走的是同一个 OS 进程创建接口。",
+      breakdown: [
+        { token: "code", label: "program 程序", text: "VS Code 的命令行带路人。" },
+        { token: ".", label: "argument 参数", text: "打开当前文件夹。" }
+      ]
+    },
+    { type: "predict",
+      title: "Bash 口音的拒绝",
+      scenario: `你在 bashlab 里输入 <code>rm "my folder"</code>（没加 -r，它是个文件夹），得到：<br><span class="term-inline">rm: cannot remove 'my folder': Is a directory</span><br><strong>下一步该怎么做？</strong>`,
+      options: [
+        { t: "rm -r \"my folder\"——确认要删整个文件夹后，加递归开关", ok: true, why: "和 PowerShell 时代的诊断一样：文件夹需要递归删除。引号保持不变。" },
+        { t: "rm my folder——去掉引号再试", ok: false, why: "去引号是反方向操作：空格会把参数切成两个，报另一个错。" },
+        { t: "重启 Git Bash", ok: false, why: "错误不传染——下一条命令照常执行，不需要重启。" },
+        { t: "用 PowerShell 删", ok: false, why: "能跑就跑题了——这是 Bash 课的随堂测验。" }
+      ],
+      explain: `诊断三步（Level 3 的老手艺）：谁错了（rm）→ 错成什么样（Is a directory）→ 为什么（文件夹要 -r）。Bash 的措辞冷淡，信息含量和 PowerShell 完全一样：<strong>读内容，不读语气</strong>。`,
+      hints: [
+        "PowerShell 时代同类报错的解法是什么？",
+        "递归开关在 Bash 里一样是 -r",
+        "Answer: rm -r \"my folder\""
+      ]
+    },
+    { type: "terminal",
+      title: "清理练习场",
+      goal: `用递归删除把空的 <code>my folder</code> 删掉：<code>rm -r \"my folder\"</code>，然后 <code>ls</code> 确认。`,
+      background: `上题刚诊断完，这题立刻执行——诊断和动手要焊在一起。`,
+      hints: [
+        "递归开关 + 引号，两个细节都要",
+        "rm -r \"my folder\"",
+        "Answer: rm -r \"my folder\" → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "rm" && getNode(s.fs, ["C:", "Users", "YOGA", "bashlab", "my folder"]) === undefined,
+      success: "清理完毕。你刚在 Bash 里完成了一次完整的『报错 → 诊断 → 修复』闭环——这才是真正属于命令行使用者的肌肉。",
+      internals: "-r 告诉 rm：把文件夹里所有成员（以及成员的成员）递归删除。空文件夹只是它的最简单情形。",
+      breakdown: [
+        { token: "rm -r \"my folder\"", label: "command + option + argument", text: "-r 解锁文件夹删除；引号保住带空格的名字。" }
+      ]
+    },
+    { type: "concept",
+      title: "毕业任务说明：四拍链，Bash 版",
+      body: `
+        <p>8.4 的毕业任务是四拍建家链：<strong>mkdir → cd → touch → code .</strong>。现在请你用 Bash 方言复刻一次。</p>
+        <p>检查清单：① 回家（你在 bashlab 里）② 建 <span class="term-inline">bashtest</span> ③ 进去 ④ touch readme.txt ⑤ code . 召唤 VS Code 打开它。</p>
+        <p>如果中途卡壳：先想 PowerShell 怎么做 → 对照表翻译 → 输入。这就是本关教你的完整流程，毕业任务就是流程本身。</p>`,
+      key: "毕业标准：<strong>不靠 Hint 完成四拍链</strong>。翻译协议可以救急，但不能替代开口。"
+    },
+    { type: "terminal",
+      title: "毕业小考：Bash 四拍建家链",
+      goal: `<code>cd ~</code> 回家 → <code>mkdir bashtest</code> → <code>cd bashtest</code> → <code>touch readme.txt</code> → <code>code .</code>。不查 Hint，自己排错。`,
+      background: `终极检验：8.4 毕业任务的重考，全程 Bash 词汇。报错时读信息——每个词都是线索。完成后你拥有装着 readme.txt 的 bashtest，并在 VS Code（模拟）里打开了它。`,
+      hints: [
+        "第一拍：先回家，再建 bashtest",
+        "第三拍是在新的 cwd 里 touch",
+        "Answer: cd ~ → mkdir bashtest → cd bashtest → touch readme.txt → code ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "code" && s.cwd.join("\\") === "C:\\Users\\YOGA\\bashtest" && getNode(s.fs, ["C:", "Users", "YOGA", "bashtest", "readme.txt"]) === null,
+      success: "code . 成功时 cwd 是 bashtest、readme.txt 在里面——四拍全对，且全程 Bash 方言。你已经会第二种 shell 了。",
+      internals: "四拍里只有词汇是新的：mkdir/touch/code 在两家通用，cd 回家用了 ~。你真正的新技能只有一个：/c/ 翻译腔和 which——它们已经是你的了。",
+      breakdown: [
+        { token: "cd ~", label: "command + 速记", text: "回家。" },
+        { token: "mkdir bashtest", label: "command + argument", text: "建家。" },
+        { token: "cd bashtest", label: "command + argument", text: "进屋。" },
+        { token: "touch readme.txt", label: "command + argument", text: "放文件。" },
+        { token: "code .", label: "program + argument", text: "GUI 召唤。" }
+      ]
+    },
+    { type: "concept",
+      title: "小结：你会说第二种方言了——但还差最后一层",
+      body: `
+        <p>回顾本关：pwd / ls / cd / mkdir / touch / cp / mv / rm -r、/c/ 翻译腔、~ 回家、which 查户口、explorer/code 召唤——8.4 的全部技能，你已在 Bash 方言里复刻完成。</p>
+        <p>但 Git Bash 有一个「作弊」设定要心里有数：<strong>它看到的还是 Windows 的文件树</strong>（C 盘、Users、你的桌面）。你还没有真正踏进 Linux 的世界。</p>
+        <p>下一关 <strong>8.7 WSL</strong>：脚下的世界整个换掉——/home 替代 C:\Users，apt 替代下载 .exe，资源管理器要靠一座桥才能走进来。你学过的所有东西继续保值，但「电脑里住着两个世界」这件事，终于要亲眼见到了。</p>`,
+      key: "Git Bash = Bash 训练营，宿主仍是 Windows。<strong>8.7：世界本身换成 Linux。</strong>"
+    }
+  ]
+}
+,
+{
+  id: "8.7",
+  module: "02 · Command Line",
+  title: "WSL · 走进第二个世界",
+  en: "WSL: A Second World Inside Windows",
+  shell: "wsl",
+  summary: "从 Git Bash（Windows 里的 Bash 训练营）走进 WSL——一台装进 Windows 的完整 Linux。理解 /home 与 /mnt/c 两个世界、apt 包管理器、大小写敏感、sudo 与权限，亲手完成跨世界毕业任务。",
+  steps: [
+    { type: "concept",
+      title: "开幕：你的电脑里住着两个世界",
+      body: `
+        <p>Git Bash 是「Windows 程序说 Linux 话」——脚下的文件树还是 Windows 的。而 <strong>WSL（Windows Subsystem for Linux）</strong> 完全不同：<strong>你的 Windows 里住着一台完整的 Linux 电脑</strong>（本关模拟 Ubuntu），有自己的文件系统、自己的软件、自己的家。</p>
+        <p>真实世界怎么进？在 PowerShell 里输入 <span class="term-inline">wsl</span>，回车——你就跨过了世界之门；输入 <span class="term-inline">exit</span> 就回来。VS Code 的终端下拉也能直接选 WSL。</p>
+        <p>看提示符：<span class="term-inline">yoga@DESKTOP:~$</span>——8.5 你认过这个口音：user@host，Linux 家族。本关模拟终端已切换成 WSL 模式。<strong>你学过的所有命令继续有效——但脚下的世界整个换掉了。</strong></p>`,
+      key: "<strong>WSL ≠ 新 shell，是新世界。</strong>Git Bash 换的是词汇；WSL 换的是世界本身。"
+    },
+    { type: "concept",
+      title: "新世界地图：没有盘符的世界",
+      body: `
+        <p>Linux 世界的地图规则和 Windows 完全不同，先认路：</p>
+        <table class="cmp-table">
+          <tr><th>Linux 写法</th><th>它是什么</th><th>Windows 对应物</th></tr>
+          <tr><td><code>/</code></td><td>根——一切的最顶层</td><td>（没有对应物；比 C:\\ 更「根」）</td></tr>
+          <tr><td><code>/home/yoga</code></td><td>你的家</td><td>C:\\Users\\YOGA</td></tr>
+          <tr><td><code>/mnt/c</code></td><td>一座桥：通往 Windows 的 C 盘</td><td>C:\\</td></tr>
+          <tr><td><code>/etc</code></td><td>系统配置文件的家</td><td>注册表 + C:\\Windows（概念上）</td></tr>
+        </table>
+        <p><strong>重点：Linux 没有盘符。</strong>没有 C: D: 这回事——所有东西从 / 出发挂在一棵树上，Windows 的磁盘只是这棵树里的一座桥（/mnt/c）。</p>`,
+      key: "Linux 一棵树、一个根（/）；<strong>Windows 的 C 盘只是桥上风景</strong>（/mnt/c）。"
+    },
+    { type: "predict",
+      title: "认地址：/mnt/c 是什么？",
+      scenario: `在 WSL 里你看到路径 <span class="term-inline">/mnt/c/Users/YOGA</span>。它指的是什么？`,
+      options: [
+        { t: "Windows 里 C:\\Users\\YOGA 这座文件夹——透过桥看到的同一个地方", ok: true, why: "/mnt/c = C 盘的桥，后面是桥那边的路径。两边是同一批文件。" },
+        { t: "Linux 世界里一个独立的文件夹，和 Windows 没关系", ok: false, why: "/mnt 下的 c 就是桥——它通向 Windows 的 C 盘，不是独立世界。" },
+        { t: "C 盘的一个备份", ok: false, why: "不是备份——是同一处。在桥上改文件，Windows 里看也改了。" },
+        { t: "一个不存在的路径", ok: false, why: "/mnt/c 是 WSL 安装时就架好的桥，默认存在。" }
+      ],
+      explain: `桥的本义：<strong>/mnt/c 不是『C 盘的 Linux 版』，就是 C 盘本人</strong>。你在桥上 touch 一个文件，切回 Windows 的资源管理器，它就在那里。`,
+      hints: [
+        "拆开看：/mnt/c + /Users/YOGA",
+        "mnt 是 mount（挂载）——把外来磁盘挂进树里",
+        "Answer: 透过桥看到的 C:\\Users\\YOGA"
+      ]
+    },
+    { type: "terminal",
+      title: "第一句 WSL：pwd 看看新世界",
+      goal: `输入 <code>pwd</code> 看看你在新世界的坐标，再 <code>ls</code> 看看你的新家（目前是空的）。`,
+      background: `刚搬进新家，第一件事当然是看户型。注意 pwd 的回答和以往任何一个世界都不同。`,
+      hints: [
+        "和之前一样：pwd",
+        "再 ls 一下",
+        "Answer: pwd → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && s.shell === "wsl" && s.cwd.join("/") === "home/yoga",
+      success: "pwd 回答 ~（即 /home/yoga）——你在 Linux 世界有了自己的家。它和 C:\\Users\\YOGA 没有任何关系，是两个世界里各自独立的家。",
+      internals: "WSL 模式的家是 Linux 虚拟磁盘上的 /home/yoga。提示符显示 ~ 是因为它就是你的 home——shell 会用 ~ 代替 home 路径显示。",
+      breakdown: [
+        { token: "pwd", label: "command 命令", text: "同一个 pwd，三个世界三种回答。" },
+        { token: "ls", label: "command 命令", text: "新家空空如也——等你的第一批文件。" }
+      ]
+    },
+    { type: "terminal",
+      title: "Linux 世界的建家四拍",
+      goal: `建 <code>wsl-lab</code> → 进去 → <code>touch hello.txt</code> → <code>ls</code> 确认。`,
+      background: `四拍链第三次出现。PowerShell 一次、Git Bash 一次、现在 WSL 一次——三次之后这条链应该长在你手上。词汇注意：这里用 Bash 词汇（WSL 的默认 shell 就是 Bash）。`,
+      hints: [
+        "mkdir wsl-lab → cd wsl-lab",
+        "touch hello.txt",
+        "Answer: mkdir wsl-lab → cd wsl-lab → touch hello.txt → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && getNode(s.fs, ["home", "yoga", "wsl-lab", "hello.txt"]) === null,
+      success: "hello.txt 建在了 /home/yoga/wsl-lab——注意这个地址里没有任何盘符。它住在 Linux 世界。",
+      internals: "mkdir/touch 在 Linux 文件系统上工作。文件不是『存在 C 盘某处』，而是挂在 /home/yoga/wsl-lab 这棵 Linux 树的节点上。",
+      breakdown: [
+        { token: "mkdir wsl-lab", label: "command + argument", text: "在 Linux 世界建文件夹。" },
+        { token: "cd / touch / ls", label: "老四样", text: "词汇和 Git Bash 完全一样——WSL 的默认 shell 就是 Bash。" }
+      ]
+    },
+    { type: "concept",
+      title: "最关键的一课：这个文件不在任何盘里",
+      body: `
+        <p>现在做个思想实验：打开 Windows 资源管理器，翻遍 C 盘、D 盘——<strong>你永远找不到 hello.txt</strong>。</p>
+        <p>因为它根本不住在 Windows 世界。WSL 的 Linux 有自己的虚拟磁盘（对 Windows 来说是一个叫 ext4.vhdx 的大文件），<strong>/home 整棵树都锁在那个文件里</strong>。两个世界各有各的家，互不重叠。</p>
+        <table class="cmp-table">
+          <tr><th></th><th>Git Bash（8.6）</th><th>WSL（本关）</th></tr>
+          <tr><td>shell 方言</td><td>Bash</td><td>Bash（一样）</td></tr>
+          <tr><td>文件世界</td><td>Windows 的树（C 盘）</td><td><strong>Linux 自己的树</strong>（/home）</td></tr>
+          <tr><td>hello.txt 在资源管理器里</td><td>找得到</td><td><strong>找不到</strong></td></tr>
+        </table>
+        <p>这就是 8.5 埋的那句话的完整版：<strong>Git Bash 和 WSL 说同一种方言，但住在两个不同的世界。</strong></p>`,
+      key: "<strong>两个世界各自有家：C:\\Users 与 /home/yoga 互不重叠。</strong>方言相同 ≠ 世界相同。"
+    },
+    { type: "predict",
+      title: "世界边界判断",
+      scenario: `你在 WSL 里刚建的 <code>/home/yoga/wsl-lab/hello.txt</code>，能在 Windows 资源管理器的 <code>C:\Users\YOGA</code> 里找到吗？`,
+      options: [
+        { t: "不能——它在 Linux 世界的虚拟磁盘里，不在任何 Windows 盘里", ok: true, why: "两个世界各有其家。想从 Windows 看到它，必须走桥（\\wsl$ 桥或 explorer.exe 召唤）。" },
+        { t: "能——WSL 的文件都存在 C 盘某个隐藏文件夹", ok: false, why: "桥（/mnt/c）才是通向 C 盘的；/home 不经过桥。" },
+        { t: "能——只要显示隐藏文件", ok: false, why: "不是隐藏不隐藏的问题——是根本不在这棵树里。" },
+        { t: "取决于 WSL 版本", ok: false, why: "WSL2 里这是铁律：Linux 文件系统独立存放。" }
+      ],
+      explain: `答错很正常——「文件总在某块盘上」是 Windows 教出来的直觉。Linux 世界有自己的磁盘（虽然物理上它只是一个 vhdx 文件）。<strong>记住这个边界，是理解 WSL 的分水岭。</strong>`,
+      hints: [
+        "hello.txt 的路径里有 /mnt 吗？",
+        "没有桥，两个世界怎么互通？",
+        "Answer: 不能——它在 Linux 自己的世界里"
+      ]
+    },
+    { type: "terminal",
+      title: "上桥：从 Linux 世界看 Windows",
+      goal: `输入 <code>cd /mnt/c/Users/YOGA</code> 走上桥，<code>pwd</code> 确认，再 <code>ls</code> 看看你在 Windows 家里看到了什么。`,
+      background: `虽然两个世界各自独立，但桥让互相访问成为可能。上桥看看：readme.md、hello.py、Documents——你熟悉的一切都在那里。`,
+      hints: [
+        "cd /mnt/c/Users/YOGA",
+        "pwd 确认，ls 看成员",
+        "Answer: cd /mnt/c/Users/YOGA → pwd → ls"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "ls" && s.cwd.join("/") === "mnt/c/Users/YOGA" && getNode(s.fs, s.cwd.concat("readme.md")) === null,
+      success: "桥上风景：你站在 Linux 世界里，看见的却是 Windows 的 C 盘。readme.md 对你来说是同一批比特，只是走桥过来看它。",
+      internals: "/mnt/c 是 WSL 启动时自动架好的挂载点（mount point）：把 Windows 的 C 盘整个挂进 Linux 的树。对 Linux 来说它和 /home 没有任何区别——都是树上的文件夹。",
+      breakdown: [
+        { token: "cd /mnt/c/Users/YOGA", label: "command + argument", text: "过桥命令：mnt = mount，c = C 盘。" },
+        { token: "ls", label: "command 命令", text: "桥那边是 Windows 的文件——和 Git Bash 看到的是同一批。" }
+      ]
+    },
+    { type: "concept",
+      title: "桥的三个法则",
+      body: `
+        <p>把桥的规则一次说清：</p>
+        <p><strong>法则 ① 命名</strong>：/mnt/盘符小写。C 盘 → /mnt/c，D 盘 → /mnt/d，以此类推。<br>
+        <strong>法则 ② 同一处</strong>：桥上看到的就是 Windows 本人——在桥上改文件，Windows 立即可见；不是副本、不是同步。<br>
+        <strong>法则 ③ 边界</strong>：桥只覆盖你挂上来的磁盘。/home 不在桥上——那才是真正属于 Linux 世界的领地。</p>
+        <p>反过来也成立：Windows 想进 Linux 的家，要走另一座桥（资源管理器地址栏输 <span class="term-inline">\\wsl$\Ubuntu\home\yoga</span>）——马上实操。</p>`,
+      key: "桥 = /mnt/盘符小写；桥上即本人；<strong>/home 不在桥上</strong>。"
+    },
+    { type: "fill",
+      title: "桥地址速算",
+      scenario: `你在 WSL 里，想走到 Windows 的 D 盘根目录。该输入：<br><span class="term-inline">cd ______</span>`,
+      before: `cd `,
+      after: ``,
+      answer: ["/mnt/d", "mnt/d"],
+      explain: `填 <span class="term-inline">/mnt/d</span>——法则①：/mnt/ 加盘符小写。桥上没有 D:\\ 这种写法，那是 Windows 世界的地址系统。`,
+      hints: [
+        "法则①：桥的前缀是什么？",
+        "盘符要大写还是小写？",
+        "Answer: /mnt/d"
+      ]
+    },
+    { type: "terminal",
+      title: "从桥上回家",
+      goal: `输入 <code>cd ~</code> 从桥上撤回 Linux 世界的家，<code>pwd</code> 确认。`,
+      background: `站在桥上久了要记得回来——~ 永远指 Linux 世界的 /home/yoga（在 WSL 里它不再指 C 盘的家了！这是和 Git Bash 的关键差异）。`,
+      hints: [
+        "波浪号",
+        "cd ~ 然后 pwd",
+        "Answer: cd ~ → pwd"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "pwd" && s.cwd.join("/") === "home/yoga",
+      success: "回到 /home/yoga。注意 ~ 的「定义」随世界而变：PowerShell/Git Bash 里它指 C:\\Users\\YOGA，WSL 里它指 /home/yoga——同一个符号，三个世界，三种归宿。",
+      internals: "~ 展开成 $HOME，而 $HOME 的值由世界决定：Windows 世界发 C:\\Users\\YOGA，Linux 世界发 /home/yoga。shell 不操心哲学，只认便签。",
+      breakdown: [
+        { token: "cd ~", label: "command + 速记", text: "~ = 本世界的 home。WSL 里即 /home/yoga。" }
+      ]
+    },
+    { type: "terminal",
+      title: "反向召唤：从 Linux 世界叫出 Windows 的资源管理器",
+      goal: `在家目录（/home/yoga）输入 <code>explorer.exe .</code>，从 Linux 世界召唤 Windows 的资源管理器。`,
+      background: `两个世界有桥，程序也能跨界。explorer.exe 是 Windows 程序——从 WSL 里叫它的瞬间，你就跨到了 Windows 世界。`,
+      hints: [
+        "explorer.exe 空格点（WSL 里常带 .exe 全名）",
+        "对，直接输",
+        "Answer: explorer.exe ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "explorer",
+      success: "资源管理器弹开——真实世界里它会跳到 \\\\wsl$\\Ubuntu\\home\\yoga（Windows 通往 Linux 家的那座桥）。你在 Linux 发的令，Windows 的 GUI 照办。",
+      internals: "WSL 的互操作（interop）机制：Linux 进程可以启动 Windows 程序，OS 负责跨界传参数。这就是为什么 code / explorer 在 WSL 里都能用——8.6 的结论（GUI 召唤不分方言）升级成了「GUI 召唤还能跨世界」。",
+      breakdown: [
+        { token: "explorer.exe", label: "program 程序（Windows 的）", text: "带 .exe 全名是 Linux 世界的礼貌。" },
+        { token: ".", label: "argument 参数", text: "当前文件夹——Linux 世界的当前文件夹。" }
+      ]
+    },
+    { type: "terminal",
+      title: "开发者的跨世界日常：code .",
+      goal: `输入 <code>code .</code>，用 Windows 上的 VS Code 打开 Linux 世界的当前文件夹。`,
+      background: `真实开发的高频场景：代码存在 WSL 的 /home 里（Linux 工具链跑得快），编辑用 Windows 的 VS Code（体验好）。一条 code . 就把两边接上了。`,
+      hints: [
+        "和 8.6 完全一样：code 空格点",
+        "真正的跨世界不需要学新命令",
+        "Answer: code ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "code",
+      success: "VS Code 打开了你 Linux 世界的家。这是 WSL 最迷人的日常：左半身 Linux、右半身 Windows，一条命令自由穿梭。",
+      internals: "code 命令在 WSL 里由 VS Code 的 WSL 扩展接管：它在 Linux 侧装一个轻 server，Windows 侧的 VS Code 通过它读写 Linux 文件。你感受到的是无缝，底下是一次跨世界握手。",
+      breakdown: [
+        { token: "code", label: "program 程序", text: "VS Code 的带路人——WSL 扩展让它认识 Linux 路径。" },
+        { token: ".", label: "argument 参数", text: "/home/yoga。" }
+      ]
+    },
+    { type: "concept",
+      title: "Linux 生存词汇包",
+      body: `
+        <p>在 Linux 世界活下去，只需要认识这几个新词（你已经会了大部分）：</p>
+        <table class="cmp-table">
+          <tr><th>词</th><th>干什么</th><th>你已有的对应</th></tr>
+          <tr><td><code>ls -la</code></td><td>详细列出 + 显示隐藏文件（. 开头）</td><td>ls 的 option 组合（Bash 品味：连用、短名）</td></tr>
+          <tr><td><code>which</code></td><td>查程序在 PATH 哪格</td><td>8.6 刚学过</td></tr>
+          <tr><td><code>cat</code></td><td>看文件内容</td><td>8.5 对照表</td></tr>
+          <tr><td><code>--help</code> / <code>man</code></td><td>求助：程序自带说明书 / 系统手册页</td><td>新概念（下面细说）</td></tr>
+        </table>
+        <p><strong>--help 文化</strong>：Linux 世界的规矩是「每个程序都自带说明书」。几乎任何命令加 <span class="term-inline">--help</span> 就能看用法；更正式的手册叫 <span class="term-inline">man</span>（manual，如 man ls）。这呼应 8.3 五步自问法的第 ⑤ 问「去哪确认」——在 Linux 世界，答案是：先问程序自己。</p>
+        <p>（诚实声明：本模拟器对 ls 的选项仍走「提示分支」——真实 WSL 里 ls -la 会真的列出权限、大小、日期。到真实环境第一天，跑一个 ls -la 看看。）</p>`,
+      key: "Linux 求助文化：<strong>命令 --help、man 命令</strong>——程序自带说明书。"
+    },
+    { type: "terminal",
+      title: "查户口：which python3",
+      goal: `输入 <code>which python3</code>，找出 Python 在 Linux 世界住在哪。`,
+      background: `Linux 世界的 python 通常叫 python3（历史和现实原因，不展开）。用 8.6 学过的 which 查它的住址。`,
+      hints: [
+        "which 加程序名",
+        "程序名是 python3（带 3）",
+        "Answer: which python3"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "which",
+      success: "/usr/bin/python3——Linux 世界的程序户籍系统（/usr/bin 相当于 Windows 的 Program Files + System32 混合体）。PATH 逐格搜索的模型，在这里依然原样运行。",
+      internals: "WSL 的 PATH 是 Linux 写法（/usr/bin:/bin）。which 从左查到右，找到 python3 就报住址——和 where/which 在 Windows 的行为完全同构，PATH 模型的又一次复用。",
+      breakdown: [
+        { token: "which", label: "command 命令", text: "PATH 查找器（Bash 方言版）。" },
+        { token: "python3", label: "argument 参数", text: "Linux 世界的 Python 名字。" }
+      ]
+    },
+    { type: "predict",
+      title: "词汇的世界归属",
+      scenario: `你在 WSL 里输入 <code>where python3</code>，得到 <span class="term-inline">bash: where: command not found</span>。为什么？`,
+      options: [
+        { t: "where 是 Windows 世界（PowerShell）的词——WSL 的 Linux 世界没有它，要用 which", ok: true, why: "词汇也有世界归属。which ↔ where 的对应你已在 8.6 学过。" },
+        { t: "python3 没有安装", ok: false, why: "报错说的是 where 找不到——和 python3 无关。诊断时读清楚『谁』报错。" },
+        { t: "WSL 的 PATH 坏了", ok: false, why: "PATH 没问题——问题出在『where 这个词本身不存在』。" },
+        { t: "要先 cd 到 /usr/bin 才能用 where", ok: false, why: "内建命令不挑目录；这个词不存在，去哪都一样。" }
+      ],
+      explain: `这题把 8.5 的「方言归属」升级成了「世界归属」：<strong>which 属于 Linux 世界，where 属于 Windows 世界</strong>。报错 bash: where: command not found 的第一段 bash: 还透露了说话者是谁——Bash shell 本人。`,
+      hints: [
+        "command not found 的『command』指谁？",
+        "8.6 的对照表：where ↔ ?",
+        "Answer: where 是 Windows 词，这里要用 which"
+      ]
+    },
+    { type: "concept",
+      title: "Linux 的敏感点：大小写",
+      body: `
+        <p>Windows 的文件系统不区分大小写：<span class="term-inline">README.md</span> 和 <span class="term-inline">readme.md</span> 是同一个文件。而 <strong>Linux 严格区分</strong>——它们是两个可以并排存在的不同文件。</p>
+        <table class="cmp-table">
+          <tr><th>世界</th><th>Notes.txt 与 notes.txt</th></tr>
+          <tr><td>Windows（含 Git Bash、含 /mnt/c 桥上）</td><td>同一个文件</td></tr>
+          <tr><td>Linux 世界（/home、/etc……）</td><td>两个独立文件，可共存</td></tr>
+        </table>
+        <p>实战后果：在 Linux 世界输入命令和文件名时，<strong>大小写必须一丝不苟</strong>。cd documents 进不了 Documents——会报 No such file or directory。</p>`,
+      key: "Linux 大小写敏感。<strong>桥上不敏感，桥下的 Linux 世界敏感。</strong>"
+    },
+    { type: "multiselect",
+      title: "大小写敏感实战",
+      scenario: `在 WSL 的 <code>/home/yoga</code> 里（Linux 世界，大小写敏感），下面哪些文件组合<strong>能同时存在</strong>？（多选）`,
+      options: [
+        { t: "notes.txt 和 Notes.txt", ok: true, why: "两个不同的名字——Linux 视它们为两个文件。" },
+        { t: "data.csv 和 data.csv", ok: false, why: "完全相同的名字——同目录只能有一个（这在任何世界都一样）。" },
+        { t: "Project 文件夹 和 project 文件夹", ok: true, why: "P 大写不同就是不同名字——两个文件夹可以并排躺着。" },
+        { t: "在 /mnt/c 里：Work.txt 和 work.txt", ok: false, why: "桥上是 Windows 的 C 盘——大小写不敏感，视为同一个文件。" }
+      ],
+      explain: `判别口诀：<strong>看地点不看名字</strong>——文件在 Linux 世界（/home、/etc）就敏感，在桥上（/mnt/c）就走 Windows 规矩。同一条命令 cd Documents，在家目录敏感挑剔，在桥上大大咧咧。`,
+      hints: [
+        "逐项问：这个位置在桥哪边？",
+        "/mnt/c 里面归谁管？",
+        "Answer: notes.txt+Notes.txt、Project+project"
+      ]
+    },
+    { type: "concept",
+      title: "权限与 sudo：Linux 的门禁系统",
+      body: `
+        <p>Linux 世界有比 Windows 更显眼的门禁文化：</p>
+        <ul>
+          <li><strong>每个文件都带着权限标签</strong>（真实 ls -l 显示 rwxr-xr-x 一串：谁能读/写/执行）——概念先知道即可，Module 04 详解。</li>
+          <li><strong>sudo</strong> = 「以管理员身份执行这条命令」（Superuser do）。装系统级软件、改系统配置都要加它——相当于 Windows 的「以管理员身份运行」。</li>
+          <li>普通用户日常活动在自家 /home 里畅通无阻；越出 /home 动系统文件，sudo 出面。</li>
+        </ul>
+        <p>下一题你会用 apt 装软件——真实 Ubuntu 的命令是 <span class="term-inline">sudo apt install</span>，模拟器省略 sudo（你是自己家电脑的管理员），但要知道那个词的存在。</p>`,
+      key: "sudo = Linux 世界的「以管理员身份运行」；权限标签刻在文件身上。"
+    },
+    { type: "terminal",
+      title: "apt update：刷新货架",
+      goal: `输入 <code>apt update</code>，刷新 Linux 世界的软件货架清单。`,
+      background: `Linux 装软件的方式和 Windows 完全不同：不下载安装包，而是用一个叫包管理器（package manager）的程序从官方仓库自动取货。apt 是 Ubuntu 的包管理器。第一步永远是 update：刷新「货架上有什么」的清单。`,
+      hints: [
+        "两个词：apt + update",
+        "直接输入，模拟器已省略 sudo",
+        "Answer: apt update"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "apt",
+      success: "Reading package lists... Done——货架清单刷新完毕。注意体验上的差别：Windows 装软件要「找官网→下载→下一步→下一步」，Linux 是一句话。",
+      internals: "apt 连接 Ubuntu 官方仓库（archive.ubuntu.com），下载最新软件清单。这就是为什么 Linux 装软件快且干净——没有来路不明的 .exe，全部来自签名仓库。",
+      breakdown: [
+        { token: "apt", label: "program 程序", text: "Ubuntu 的包管理器。" },
+        { token: "update", label: "subcommand 子命令", text: "apt 工具箱里『刷新清单』那一格。" }
+      ]
+    },
+    { type: "terminal",
+      title: "apt install：一句话装软件",
+      goal: `输入 <code>apt install curl</code>，把 curl（命令行下载工具）装进 Linux 世界。`,
+      background: `curl 是命令行世界的瑞士军刀（下载文件）。真实命令是 sudo apt install curl——模拟器跳过 sudo，但脑内自动补上。`,
+      hints: [
+        "apt install 加包名",
+        "包名是 curl",
+        "Answer: apt install curl"
+      ],
+      validate: (r, s) => !r.err && r.cmd === "apt" && r.lines.some(l => l.text.indexOf("curl") !== -1),
+      success: "curl 已装好——并且它已经被自动放进了 PATH（/usr/bin）。Linux 装软件的完整闭环：一句话 = 下载 + 安装 + 配好 PATH。Windows 上这要三步且各找各的。",
+      internals: "包管理器把「程序 + 它的依赖 + PATH 配置」打包成一次事务。Level 6 你学过的 PATH 户口，在 Linux 世界由 apt 自动上报——这就是工具链设计的差距。",
+      breakdown: [
+        { token: "apt", label: "program 程序", text: "包管理器（工具箱型）。" },
+        { token: "install", label: "subcommand 子命令", text: "工具箱里『安装』那一格。" },
+        { token: "curl", label: "argument 参数", text: "要装的包名。" }
+      ]
+    },
+    { type: "concept",
+      title: "Everything is a file：Linux 的世界观",
+      body: `
+        <p>Linux 世界有一条设计哲学，知道它就能看懂很多怪事：<strong>一切皆文件（everything is a file）</strong>。</p>
+        <p>硬盘是文件、进程信息是文件（/proc）、设备是文件（/dev）、系统配置是文件（/etc 里的纯文本）——<strong>没有注册表</strong>这种特殊数据库，所有配置都躺在某个文本文件里，用你学过的 cat 就能读，用文本编辑器就能改。</p>
+        <p>对你的意义：你在本课程学的「文件系统是一棵树 + 文本文件」的模型，在 Linux 世界<strong>不是局部知识，是整个操作系统的通用语言</strong>。这也是为什么说命令行 mental model 在 Linux 世界保值最高。</p>`,
+      key: "Linux：一切皆文件。你学的文件树模型 = 整个 OS 的通用语言。"
+    },
+    { type: "multiselect",
+      title: "世界合理性检查",
+      scenario: `你在 WSL（Ubuntu）里。下面哪些操作<strong>合理</strong>、哪些是「拿错世界说明书」？选出所有合理的。（多选）`,
+      options: [
+        { t: "apt install wget", ok: true, why: "Linux 世界装软件的标准姿势。" },
+        { t: "explorer.exe .", ok: true, why: "WSL 互操作——召唤 Windows 程序完全合法（8.x 刚练过）。" },
+        { t: "code .", ok: true, why: "code 命令在 WSL 里由 VS Code WSL 扩展接管，正常可用。" },
+        { t: "cd C:\\Users\\YOGA", ok: false, why: "C:\\ 是 Windows 的地址系统——Linux 世界没有盘符。想过去要走桥：cd /mnt/c/Users/YOGA。" },
+        { t: "dir /s", ok: false, why: "那是 CMD 的方言（dir 命令 + /s 选项），不属于这个世界。" },
+        { t: "where git", ok: false, why: "where 是 Windows 词——Linux 世界用 which。" }
+      ],
+      explain: `三项合理操作正好覆盖你在 WSL 的日常三面：<strong>Linux 原生</strong>（apt）、<strong>跨界召唤</strong>（explorer.exe / code）、而三个错误选项分别是「Windows 地址系统」「CMD 方言」「Windows 词汇」——各回各的世界。`,
+      hints: [
+        "逐项问：这是哪个世界的说明书？",
+        "想在 WSL 里用 Windows 的路径/命令，先想桥和互操作",
+        "Answer: apt install wget、explorer.exe .、code ."
+      ]
+    },
+    { type: "matching",
+      title: "Matching：三个世界，一张对照总表",
+      scenario: `收官匹配：同一个「家」，在三个世界各有写法/所在。把每种写法连到它的世界身份。`,
+      pairs: [
+        { l: "C:\\Users\\YOGA", r: "Windows 世界的家（PowerShell / CMD）" },
+        { l: "/c/Users/YOGA", r: "Git Bash 里的同一个家（翻译腔）" },
+        { l: "/mnt/c/Users/YOGA", r: "WSL 里过桥看到的同一个家" },
+        { l: "/home/yoga", r: "WSL 的 Linux 世界自己的家（独立存在）" }
+      ],
+      choices: ["Windows 世界的家（PowerShell / CMD）", "Git Bash 里的同一个家（翻译腔）", "WSL 里过桥看到的同一个家", "WSL 的 Linux 世界自己的家（独立存在）", "一个不存在的路径"],
+      explain: `四个格子讲完了 8.5 → 8.7 的全部地理：<strong>C:\\Users\\YOGA 只有一个，但它的「访问方式」随世界而变</strong>；而 /home/yoga 是 Linux 世界独有的、与 C 盘无任何关系的第二个家。两张「家」的概念不要合并。`,
+      key: "一个是家（C:\\Users\\YOGA），三种抵达方式；<strong>另一个世界另有一个家（/home/yoga）</strong>。",
+      hints: [
+        "先连你 100% 确定的：Windows 写法",
+        "/c 是翻译腔，/mnt/c 是桥——翻译腔和桥不一样",
+        "Answer: C:\\Users\\YOGA→Windows 家 / /c/...→Git Bash 翻译 / /mnt/c/...→WSL 桥 / /home/yoga→Linux 自己的家"
+      ]
+    },
+    { type: "terminal",
+      title: "毕业小考：跨世界六拍链",
+      goal: `在家目录依次完成：<code>mkdir project</code> → <code>cd project</code> → <code>touch main.py</code> → <code>touch notes.md</code> → <code>code .</code>（VS Code 打开）→ <code>explorer.exe .</code>（资源管理器看它）。`,
+      background: `终极检验：四拍建家链 + 两次跨世界 GUI 召唤。注意每一步你在哪个世界、动作归谁管。如果报错，读信息——你现在应该能读三种方言的报错了。`,
+      hints: [
+        "前四拍和 Git Bash 课完全一样",
+        "code . 和 explorer.exe . 是跨世界召唤，顺序随意",
+        "Answer: mkdir project → cd project → touch main.py → touch notes.md → code . → explorer.exe ."
+      ],
+      validate: (r, s) => !r.err && r.cmd === "explorer" && s.cwd.join("/") === "home/yoga/project" && getNode(s.fs, ["home", "yoga", "project", "main.py"]) === null && getNode(s.fs, ["home", "yoga", "project", "notes.md"]) === null,
+      success: "六拍全对：你在 Linux 世界建了项目、放进两个文件，并从 Linux 世界两次召唤 Windows 的 GUI 看它。跨世界工作流，成立。",
+      internals: "mkdir/cd/touch 发生在 Linux 世界（/home/yoga/project）；code 和 explorer.exe 是跨界调用——Linux 进程请求 OS 启动 Windows 程序。一条任务链，两个世界，你调度自如。",
+      breakdown: [
+        { token: "mkdir / cd / touch", label: "Linux 世界动作", text: "建项目、放文件——全部在 /home 树上。" },
+        { token: "code . / explorer.exe .", label: "跨世界召唤", text: "Windows GUI 走进 Linux 的家看你。" }
+      ]
+    },
+    { type: "predict",
+      title: "毕业复盘：动作分世界",
+      scenario: `毕业链（mkdir project → cd project → touch main.py → code . → explorer.exe .）走完后，把动作按世界分类。<strong>正确的是？</strong>`,
+      options: [
+        { t: "mkdir/cd/touch 属于 Linux 世界；code 和 explorer.exe 属于「跨到 Windows 世界」的动作", ok: true, why: "文件操作在 /home 树上发生；两个 GUI 召唤是 Linux 进程启动 Windows 程序。" },
+        { t: "全部动作都发生在 Windows 世界", ok: false, why: "project 建在 /home/yoga——Windows 资源管理器不翻 \\\\wsl$ 桥根本看不到它。" },
+        { t: "全部动作都发生在 Linux 世界", ok: false, why: "code 和 explorer.exe 是 Windows 程序——它们的窗口画在 Windows 世界里。" },
+        { t: "code . 发生在 Linux 世界，explorer.exe . 发生在 Windows 世界", ok: false, why: "两者本质相同：都是 Linux 侧发起、Windows 侧执行的跨界调用。" }
+      ],
+      explain: `能用「哪个世界的动作」这个框架复盘一条命令链，说明两个世界的模型已经各就各位。<strong>命令行高手的标志不是记住更多命令，而是随时知道自己在哪、动作归谁管。</strong>`,
+      hints: [
+        "project 文件夹在哪棵树上？",
+        "code 和 explorer 的窗口画在哪个世界？",
+        "Answer: 文件操作归 Linux，GUI 召唤归跨世界"
+      ]
+    },
+    { type: "multiselect",
+      title: "最终辨析：四个不是同一个东西",
+      scenario: `课程最后的一组辨析。下面哪些说法<strong>正确</strong>？（多选）`,
+      options: [
+        { t: "WSL ≠ Terminal：WSL 是藏在 Windows 里的整个 Linux 世界；Terminal 只是窗口容器", ok: true },
+        { t: "WSL ≠ Bash：WSL 里有 Bash，但也有 Ubuntu 系统本身、apt、自己的文件系统——Bash 只是住在里面的 shell", ok: true },
+        { t: "WSL ≠ VS Code：VS Code 可以从 WSL 里被召唤（code .），但它是 Windows 的程序", ok: true },
+        { t: "Git Bash ≈ WSL：都是 Windows 上的 Bash，差不多", ok: false, why: "8.5 就辨析过：Git Bash 是 Windows 程序（住在 C 盘世界），WSL 是完整 Linux（住在自己的虚拟磁盘）。方言相同，世界不同。" },
+        { t: "Terminal = Shell：一个窗口就是一种 shell", ok: false, why: "8.0 的核心辨析：窗口是容器，shell 是住客——同一个 Windows Terminal 可以住 PowerShell、CMD、Git Bash、WSL。" }
+      ],
+      explain: `Module C 的三条主线在此收口：<strong>容器（Terminal）≠ 住客（Shell）≠ 世界（OS/WSL）≠ 工具（VS Code）</strong>。8.0 建立骨架、8.5 学会听口音、8.6 开了第二种口、8.7 走进第二个世界——你现在拥有的，是一张完整的终端生态地图。`,
+      hints: [
+        "用『窗口 / 住客 / 世界 / 工具』四个格子挨个装",
+        "Git Bash 和 WSL 差在哪一层？",
+        "Answer: 前三项正确"
+      ]
+    },
+    { type: "concept",
+      title: "Module C 毕业：你手里的地图",
+      body: `
+        <p>从 Level 6 到现在，你建起的完整模型：</p>
+        <p style="text-align:center;margin:14px 0;">Computer → OS（Windows / Linux）→ Terminal（窗口容器）→ Shell（方言：PowerShell / CMD / Bash）→ Commands（词汇）<br>＋ 两个世界（C:\\ 与 /home）＋ 两座桥（/mnt/c 与 \\\\wsl$）＋ 互操作召唤（code / explorer.exe）</p>
+        <p>这张地图上每一个格子你都亲手摸过：PowerShell 里写过命令链（8.4），Git Bash 里换过方言（8.6），WSL 里跨过世界（8.7），还学会了面对陌生命令的五步自问法（8.3）和三种方言的报错（8.5–8.7）。</p>
+        <p>下一模块 <strong>Module D · Git & GitHub</strong>：git 你已经在 6、8.3 里多次照面（git init / git commit -m），Module D 把它的 mental model（工作区/暂存区/仓库/分支/远程）一次讲透——而且你会发现，Git 的命令天然就是 Bash 方言的，8.6 的训练马上变现。</p>`,
+      key: "<strong>Module C 毕业。</strong>下站 Git——你已经有两种方言和两座桥打底了。"
+    }
+  ]
+}
+
+
 
 
 ];
@@ -6024,12 +7049,133 @@ const REVIEWS = {
     ]
   }
 
+  ,
+  "8.6": {
+    concepts: [
+      "换 shell ≠ 从头学：句法四件套、cwd、路径、引号、通配符、PATH/进程模型全部跨方言保值，只有词汇在变",
+      "pwd/ls/cd/mkdir 是跨方言稳定的基础词；越基础的词，各方言越一致",
+      "同一个词在不同方言身份不同：pwd 在 PowerShell 是 Get-Location 的别名（马甲），在 Bash 是原生命令",
+      "错误信息也有方言：bash: xxx: command not found 与 PowerShell 长句报错含义相同——读内容不读语气",
+      "/c/Users/... 是 Git Bash 的地址滤镜：C: → /c、\\ → /；cd ~ 在任何世界都回家，但『家』随世界定义",
+      "where ↔ which：同一 PATH 查询动作的两个方言按钮；诊断逻辑（先 PATH 后拼写）跨方言通用",
+      "shell 内置命令随方言变（which/where），外部程序召唤跨方言通用（explorer/code 是 OS 的孩子，不是 shell 的）",
+      "Bash 拒绝删文件夹说 Is a directory——诊断三步（谁/什么样/为什么）换口音照常使用"
+    ],
+    commands: [
+      { cmd: "pwd / ls / cd / mkdir", en: "—", zh: "跨方言稳定的基础词（Bash 里均为本名）" },
+      { cmd: "touch / rm / cp / mv", en: "—", zh: "New-Item / Remove-Item / Copy-Item / Move-Item 的 Bash 本尊" },
+      { cmd: "rm -r <文件夹>", en: "remove recursively", text: "", zh: "递归删除；文件夹必须加 -r" },
+      { cmd: "cd /c/Users/YOGA/Documents", en: "—", zh: "绝对路径的 Git Bash 写法（翻译腔）" },
+      { cmd: "cd ~", en: "—", zh: "回家；Git Bash 里 ~ = C:\\Users\\YOGA" },
+      { cmd: "which git", en: "—", zh: "Bash 的 PATH 查户口（PowerShell 对应 where）" },
+      { cmd: "explorer.exe . / code .", en: "—", zh: "GUI 召唤跨方言通用；.exe 全名是 Linux 世界的礼貌" }
+    ],
+    terms: [
+      { en: "MINGW64", zh: "Git Bash 的祖籍标志", ex: "提示符 YOGA@DESKTOP MINGW64 /c/Users/YOGA" },
+      { en: "builtin 内建命令", zh: "shell 自带的命令", ex: "pwd 在 Bash 是 builtin，不用读磁盘" },
+      { en: "/c 翻译腔", zh: "C:\\ 的 Git Bash 写法", ex: "cd /c/Users = cd C:\\Users" },
+      { en: "~ (tilde)", zh: "home 速记", ex: "随世界而变：PS/Git Bash → C:\\Users\\YOGA" },
+      { en: "which", zh: "Bash 的 PATH 查找器", ex: "where 的方言对应" },
+      { en: "Is a directory", zh: "Bash 的删文件夹拒绝语", ex: "对应解法 rm -r" }
+    ],
+    mistakes: [
+      "在 Git Bash 里打 Remove-Item / Get-ChildItem——那是 PowerShell 词汇，Bash 会 command not found",
+      "忘了 /c/ 翻译腔直接输 C:\\（其实认得，但报错和提示都用 /c 显示，认母语更省力）",
+      "rm 文件夹被拒后去掉引号重试——正解是加 -r，引号要保留",
+      "以为打错命令会弄坏东西——command not found 只是 PATH 没找到，世界安然无恙",
+      "以为换 shell 要重学一遍——只有词汇表换了，模型全是旧的"
+    ],
+    quiz: [
+      { q: "在 Git Bash 里，pwd 的身份是？", options: [
+        { t: "Bash 的原生命令（本名）", ok: true, why: "" },
+        { t: "Get-Location 的别名", ok: false, why: "那是它在 PowerShell 里的身份——Bash 不认得 Get-Location。" },
+        { t: "一个 .exe 程序", ok: false, why: "pwd 是 shell 内建命令，builtin。" },
+        { t: "cd 的别名", ok: false, why: "pwd 问位置，cd 改位置。" } ] },
+      { q: "Git Bash 里怎么直达 C:\\Users\\YOGA\\Documents？", options: [
+        { t: "cd /c/Users/YOGA/Documents", ok: true, why: "" },
+        { t: "cd /mnt/c/Users/YOGA/Documents", ok: false, why: "/mnt/c 是 WSL 的桥——Git Bash 不用这座桥。" },
+        { t: "cd C:\\Users\\YOGA\\Documents（唯一正确写法）", ok: false, why: "其实认得，但 /c/ 才是它的母语写法。" },
+        { t: "cd ~\\Documents", ok: false, why: "~ 在 Git Bash 指家目录，但练习的是绝对路径直达。" } ] },
+      { q: "bash: gitt: command not found 是什么意思？", options: [
+        { t: "PATH 清单里找不到叫 gitt 的程序——检查拼写", ok: true, why: "" },
+        { t: "Git Bash 坏了，需要重装", ok: false, why: "只是没找到程序，shell 本身工作正常。" },
+        { t: "gitt 存在但没有权限", ok: false, why: "权限问题会说 Permission denied，不是 not found。" },
+        { t: "网络连接失败", ok: false, why: "查找 PATH 是本地操作，不涉及网络。" } ] },
+      { q: "在 Git Bash 里查 python 装在 PATH 哪格，该输入？", options: [
+        { t: "which python", ok: true, why: "" },
+        { t: "where python", ok: false, why: "where 是 PowerShell/CMD 的词——Bash 会报 command not found。" },
+        { t: "find python", ok: false, why: "find 是在文件夹树里搜文件的命令，不是查 PATH。" },
+        { t: "ls python", ok: false, why: "ls 列出当前文件夹成员，不做 PATH 搜索。" } ] }
+    ]
+  },
+  "8.7": {
+    concepts: [
+      "WSL = 装进 Windows 的完整 Linux（虚拟机），不只是新 shell：自己的文件系统、自己的软件、自己的家",
+      "Linux 世界没有盘符：一棵树的根是 /；/home/yoga 是 Linux 的家，与 C:\\Users\\YOGA 互不重叠",
+      "/mnt/c 是桥：通往 Windows C 盘（/mnt/盘符小写）；桥上看到的就是 Windows 本人，可读写",
+      "/home 不在桥上——Linux 世界的文件锁在自己的虚拟磁盘里，Windows 资源管理器翻遍 C 盘也找不到",
+      "~ 的归宿随世界而变：PowerShell/Git Bash → C:\\Users\\YOGA；WSL → /home/yoga",
+      "GUI 程序能跨世界召唤：explorer.exe / code 从 WSL 里启动 Windows 程序（WSL 互操作），窗口画在 Windows 世界",
+      "Linux 文件系统大小写敏感（notes.txt ≠ Notes.txt）；桥上（/mnt/c）仍走 Windows 规矩",
+      "apt 是 Ubuntu 的包管理器：sudo apt update（刷新清单）+ sudo apt install（一句话装好并配好 PATH）；sudo = 以管理员身份",
+      "Linux 求助文化：命令 --help 与 man 命令——程序自带说明书（呼应五步自问法第⑤问）"
+    ],
+    commands: [
+      { cmd: "cd /mnt/c/Users/YOGA", en: "—", zh: "过桥看 Windows 的家" },
+      { cmd: "cd ~", en: "—", zh: "回 Linux 世界的家（/home/yoga）" },
+      { cmd: "explorer.exe . / code .", en: "—", zh: "从 Linux 世界召唤 Windows GUI（互操作）" },
+      { cmd: "which python3", en: "—", zh: "Linux 世界的 PATH 查户口（/usr/bin/python3）" },
+      { cmd: "apt update / apt install <pkg>", en: "—", zh: "包管理器（模拟省略 sudo；真实 Ubuntu 要加）" },
+      { cmd: "ls -la / cat / --help", en: "—", zh: "生存词汇包：详细列表 / 看内容 / 程序自带说明书" }
+    ],
+    terms: [
+      { en: "WSL (Windows Subsystem for Linux)", zh: "Windows 里的 Linux 子系统", ex: "一台装进 Windows 的完整 Linux" },
+      { en: "/ (root)", zh: "Linux 的根", ex: "一切路径的起点，比盘符更『根』" },
+      { en: "mount point 挂载点", zh: "把外来磁盘挂进树的接口", ex: "/mnt/c 就是 C 盘的挂载点" },
+      { en: "\\wsl$", zh: "Windows 通往 Linux 家的桥", ex: "资源管理器地址栏输入即达" },
+      { en: "apt", zh: "Ubuntu 包管理器", ex: "软件仓库自动取货安装" },
+      { en: "sudo", zh: "以管理员身份执行", ex: "Superuser do" },
+      { en: "case-sensitive", zh: "大小写敏感", ex: "notes.txt 与 Notes.txt 是两个文件" },
+      { en: "everything is a file", zh: "一切皆文件", ex: "配置在 /etc 的文本里，没有注册表" }
+    ],
+    mistakes: [
+      "以为 WSL 的文件存在 C 盘某个角落——/home 在 Linux 自己的虚拟磁盘里，要走 \\\\wsl$ 桥才能从 Windows 看到",
+      "在 WSL 里输 C:\\Users——Linux 世界没有盘符，过桥要输 /mnt/c/Users",
+      "把 /c/Users（Git Bash 翻译腔）和 /mnt/c/Users（WSL 桥）混为一谈——两个世界的两套地址系统",
+      "在 Linux 世界指望大小写不敏感——cd documents 进不了 Documents",
+      "在 WSL 里用 where / dir /s——那些是 Windows / CMD 的词汇，Linux 世界用 which、ls",
+      "装软件还去下载网页安装包——Linux 世界一句话 apt install 搞定"
+    ],
+    quiz: [
+      { q: "WSL 里 /home/yoga/hello.txt 和 C:\\Users\\YOGA 是什么关系？", options: [
+        { t: "没关系——它在 Linux 世界自己的虚拟磁盘里，两个独立的家", ok: true, why: "" },
+        { t: "它在 C 盘某个隐藏文件夹里", ok: false, why: "/home 不经过 /mnt 桥——不在任何 Windows 盘上。" },
+        { t: "它是 C:\\Users\\YOGA 的快捷方式", ok: false, why: "不是链接——是另一个世界里独立存在的文件。" },
+        { t: "开机时它会自动同步到 C 盘", ok: false, why: "没有自动同步；要互通必须走桥。" } ] },
+      { q: "在 WSL 里想列出 Windows D 盘的内容，路径怎么写？", options: [
+        { t: "ls /mnt/d", ok: true, why: "" },
+        { t: "ls D:\\", ok: false, why: "盘符是 Windows 的地址系统——Linux 世界要用桥。" },
+        { t: "ls /d", ok: false, why: "/d 是 Git Bash 的翻译腔写法；WSL 的桥是 /mnt/。" },
+        { t: "ls /home/d", ok: false, why: "/home 是各用户的家，与磁盘无关。" } ] },
+      { q: "在 WSL 里输入 where git，报 bash: where: command not found。说明了什么？", options: [
+        { t: "where 是 Windows 世界的词，WSL 里要用 which", ok: true, why: "" },
+        { t: "git 没有安装", ok: false, why: "报错对象是 where 本身——和 git 无关。" },
+        { t: "PATH 环境变量损坏了", ok: false, why: "这个词不存在于 Linux 世界，查 PATH 也没用。" },
+        { t: "需要先 sudo", ok: false, why: "command not found 是「没有这个词」，不是权限问题。" } ] },
+      { q: "毕业链「在 WSL 里 mkdir project && touch main.py && code .」里，code . 发生了什么？", options: [
+        { t: "Linux 进程启动 Windows 的 VS Code（WSL 互操作），窗口画在 Windows 世界", ok: true, why: "" },
+        { t: "在 Linux 世界里安装了 VS Code", ok: false, why: "VS Code 窗口画在 Windows 世界——它是 Windows 程序。" },
+        { t: "失败，因为 Linux 不能运行 Windows 程序", ok: false, why: "WSL 互操作正是为此而生——code 命令在 WSL 里正常可用。" },
+        { t: "在 /home/yoga 里生成了一个叫 code 的文件", ok: false, why: "code 是程序不是文件；它打开的是 project 文件夹。" } ] }
+    ]
+  }
+
 };
 
 const ROADMAP = [
   { mod: "A", name: "File System & Paths · 文件系统与路径", levels: [0,1,2], desc: "Level 0 操作对象 → Level 1 文件与文件夹 → Level 2 路径（绝对/相对/..）" },
   { mod: "B", name: "Terminal & Shell · 终端与 Shell", levels: [3,4,5], desc: "Level 3 Terminal → Level 4 PowerShell / CMD / Bash 辨析（Terminal ≠ Shell ≠ OS）→ Level 5 命令语法：选项、参数、引号、通配符" },
-  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2","8.3","8.4","8.5"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）→ 8.3 Command Syntax（How is a sentence built?）→ 8.4 Command Line in Practice（Can I write one myself?）→ 8.5 Same Computer, Different Shells（Why do shells speak different dialects?）" },
+  { mod: "C", name: "Programs, PATH & Terminal Ecosystem · 程序、PATH 与终端生态", levels: [6,7,8,"8.1","8.2","8.3","8.4","8.5","8.6","8.7"], desc: "Level 6 可执行文件与 PATH → Level 7 环境变量 → Level 8.0 Terminal Ecosystem（Where am I?）→ 8.1 Command Line Foundations（What am I talking to?）→ 8.2 Command Line as a Language（How do I speak to it?）→ 8.3 Command Syntax（How is a sentence built?）→ 8.4 Command Line in Practice（Can I write one myself?）→ 8.5 Same Computer, Different Shells（Why do shells speak different dialects?）→ 8.6 Git Bash（Can I actually use another shell?）→ 8.7 WSL（What changes when the shell is running inside Linux?）" },
   { mod: "D", name: "Git & GitHub", levels: [9,10,11,12,13,14,15], desc: "Level 9 Git mental model → 10 GitHub → 11 Repository → 12 clone/status/add/commit → 13 remote/push/pull（含 fetch vs pull 可视化）→ 14 分支与合并 → 15 阅读真实仓库 LaTeX-Workshop-2026" },
   { mod: "E", name: "Development Environment · 开发环境", levels: [16,17], desc: "Level 16 VS Code 与开发环境 → Level 17 LaTeX 工具链（.tex → compiler → .pdf，MiKTeX/latexmk/Perl 各是什么）→ 之后 LaTeX Basics：document/section/公式/中文排版，作为开发环境的真实案例" },
   { mod: "F", name: "Network Basics · 网络基础", levels: [18,19], desc: "Level 18 IP / DNS / 网络连接 → Level 19 ping / ipconfig / nslookup / 代理" },
@@ -6108,10 +7254,16 @@ const termInput = document.getElementById("termInput");
 const termPromptEl = document.getElementById("termPrompt");
 const termCwdEl = document.getElementById("termCwd");
 
+function promptText(state){
+  const sh = state.shell || "ps";
+  if(sh === "bash") return "YOGA@DESKTOP MINGW64 " + displayPath(state, state.cwd);
+  if(sh === "wsl") return "yoga@DESKTOP:" + displayPath(state, state.cwd) + "$";
+  return "PS " + pathStr(state.cwd) + ">";
+}
 function updatePrompt(){
-  const p = "PS " + pathStr(term.cwd) + ">";
+  const p = promptText(term);
   termPromptEl.textContent = p;
-  termCwdEl.textContent = pathStr(term.cwd);
+  termCwdEl.textContent = displayPath(term, term.cwd);
 }
 function termPrint(text, cls){
   const div = document.createElement("div");
@@ -6121,12 +7273,22 @@ function termPrint(text, cls){
   termOut.scrollTop = termOut.scrollHeight;
 }
 function resetTerminal(silent){
-  term = createTermState();
+  const lv = (typeof LEVELS !== "undefined" && typeof store !== "undefined") ? LEVELS[store.level] : null;
+  const sh = lv && lv.shell ? lv.shell : "ps";
+  term = createTermState(sh);
   termOut.innerHTML = "";
   updatePrompt();
   if(!silent){
-    termPrint("Windows PowerShell simulator (virtual — never touches your real PC)", "t-dim");
-    termPrint("Type help to see supported commands", "t-dim");
+    if(sh === "bash"){
+      termPrint("Git Bash simulator (MINGW64) — virtual, never touches your real PC", "t-dim");
+      termPrint("口音切换：这是 Bash 方言的模拟器，路径用 /c/Users/... 写法。Type help", "t-dim");
+    } else if(sh === "wsl"){
+      termPrint("WSL (Ubuntu) simulator — a virtual Linux world inside Windows", "t-dim");
+      termPrint("你在 Linux 世界：家在 /home/yoga，Windows 的 C 盘在 /mnt/c。Type help", "t-dim");
+    } else {
+      termPrint("Windows PowerShell simulator (virtual — never touches your real PC)", "t-dim");
+      termPrint("Type help to see supported commands", "t-dim");
+    }
   }
 }
 document.getElementById("termReset").addEventListener("click", () => resetTerminal());
@@ -6191,8 +7353,15 @@ function wireNav(li, si){
   });
 }
 
+let lastRenderedLevel = -1;
 function render(){
   currentTerminalValidator = null;
+  // 跨关时重置终端：切换 shell 模式（ps/bash/wsl）并恢复该关的初始文件系统，
+  // 否则上一关留下的 cwd / shell 会泄漏进新关卡（例如从 8.5 进 8.6 仍是 PowerShell）。
+  if(store.level !== lastRenderedLevel){
+    lastRenderedLevel = store.level;
+    resetTerminal(true);
+  }
   const li = store.level, si = store.step;
   const level = LEVELS[li];
   const step = level.steps[si];
